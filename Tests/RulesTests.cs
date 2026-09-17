@@ -115,6 +115,8 @@ static class RulesTests
             {
                 client.Join("127.0.0.1");Check(SpinWait.SpinUntil(()=>host.Connected&&client.Connected,5000),"LAN connection");
                 client.Send("steer");Check(SpinWait.SpinUntil(()=>!host.Incoming.IsEmpty,2000)&&host.Incoming.TryDequeue(out var input)&&input=="steer","client sends input to host");
+                client.SendUnreliable("fast-steer");Check(SpinWait.SpinUntil(()=>!host.Incoming.IsEmpty,2000)&&host.Incoming.TryDequeue(out var fast)&&fast=="fast-steer","unreliable input arrives like reliable");
+                host.SendUnreliable("fast-state");Check(SpinWait.SpinUntil(()=>!client.Incoming.IsEmpty,2000)&&client.Incoming.TryDequeue(out var state)&&state=="fast-state","unreliable state arrives like reliable");
                 var g=Game();for(int i=0;i<50;i++)g.Step(GameSimulation.Tick);
                 var options=new JsonSerializerOptions{IncludeFields=true};host.Send(JsonSerializer.Serialize(Packet.Snapshot(g),options));
                 Check(SpinWait.SpinUntil(()=>!client.Incoming.IsEmpty,2000),"host snapshot arrives");client.Incoming.TryDequeue(out var raw);var packet=JsonSerializer.Deserialize<Packet>(raw,options);
@@ -124,6 +126,28 @@ static class RulesTests
             Check(SpinWait.SpinUntil(()=>!host.Connected,2000),"disconnect detected");
             using(var rejoin=new LanSession())
             {rejoin.Join("127.0.0.1");Check(SpinWait.SpinUntil(()=>host.Connected&&rejoin.Connected,5000),"host accepts reconnect");}
+        }
+        {
+            var asm=new SnapshotChunks.Assembler();
+            string big=new string('A',2000);
+            var parts=SnapshotChunks.Split(7,big);
+            Check(parts.Length==4,"snapshot splits into bounded pieces");
+            Check(Array.TrueForAll(parts,p=>p.Length<=SnapshotChunks.MaxPiece+32),"chunk pieces stay small");
+            string done=null;bool ready=false;
+            for(int i=parts.Length-1;i>=0;i--)ready=asm.Push(parts[i],out done);
+            Check(ready&&done==big,"chunk reassembly restores payload out of order");
+            var asm2=new SnapshotChunks.Assembler();string tmp=null;
+            var p1=SnapshotChunks.Split(1,new string('x',600));var p2=SnapshotChunks.Split(2,"yyyy");
+            Check(p1.Length==2&&!asm2.Push(p1[0],out tmp)&&tmp==null,"partial snapshot is not emitted");
+            Check(asm2.Push(p2[0],out tmp)&&tmp=="yyyy","newer snapshot replaces stale partial");
+            Check(SnapshotChunks.Split(9,"hi").Length==1,"small payload stays whole");
+            var g2=Game();for(int i=0;i<120;i++)g2.Step(GameSimulation.Tick);
+            var snap=Packet.Snapshot(g2);
+            Check(snap.players.All(p=>p.trail==null),"snapshots drop raw cell trails");
+            var asm3=new SnapshotChunks.Assembler();string wire=JsonSerializer.Serialize(snap,new JsonSerializerOptions{IncludeFields=true});
+            string joined=null;foreach(var c in SnapshotChunks.Split(3,wire))asm3.Push(c,out joined);
+            var back=JsonSerializer.Deserialize<Packet>(joined,new JsonSerializerOptions{IncludeFields=true});
+            Check(back!=null&&back.matchId==snap.matchId&&back.players[0].coins==snap.players[0].coins,"chunked snapshot round trip preserves state");
         }
         Console.WriteLine($"{checks} checks passed.");
     }

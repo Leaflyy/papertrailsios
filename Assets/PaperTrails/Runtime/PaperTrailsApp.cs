@@ -22,8 +22,9 @@ namespace PaperTrails
         bool hosting,practice,remoteReady,ready,wasConnected,banked,authorized,smokeHost,codeWritten,recoveryCopied;
         int snapshots;
         Team team=Team.Red,remoteTeam=Team.Blue;
-        int skin,remoteSkin,vote,remoteVote,wallet,localId,selectedArena;
-        float accumulator,sendTimer,rouletteStart,nextClick,duration=300,unlockTime=-10,nextHeartbeat;
+        int skin,remoteSkin,vote,remoteVote,wallet,localId,selectedArena,sendSeq;
+        readonly SnapshotChunks.Assembler snapshotAsm=new SnapshotChunks.Assembler();
+        float accumulator,sendTimer,finishSend,rouletteStart,nextClick,duration=300,unlockTime=-10,nextHeartbeat;
         int lastSecond=-1;
         int[] votes;
         string address="192.168.1.10",status="",remoteToken="",token,reveal="",recoveryCode="",restoreCode="",playerName="Player",remoteName="Player 2";
@@ -119,7 +120,13 @@ namespace PaperTrails
                 if(Time.time>=nextClick){sound.Play("roulette");nextClick=Time.time+Mathf.Lerp(.055f,.5f,(Time.time-rouletteStart)/4);}
                 if(hosting && Time.time-rouletteStart>=4.5f)StartMatch(selectedArena);
             }
-            if(screen!=ScreenMode.Match)return;
+            if(screen!=ScreenMode.Match)
+            {
+                // After regulation ends, keep the final snapshots flowing briefly so a
+                // joiner that missed the exact finish frame still banks its coins.
+                if(hosting&&screen==ScreenMode.Results&&finishSend>0&&game!=null){finishSend-=Time.deltaTime;sendTimer-=Time.deltaTime;if(sendTimer<=0){sendTimer=.1f;SendUnreliable(Packet.Snapshot(game));}}
+                return;
+            }
             int seconds=Mathf.CeilToInt(game.Remaining);if(seconds!=lastSecond){lastSecond=seconds;if(seconds<=10&&seconds>0)sound.Play("tick");}
             InputDirection();
             if(hosting)
@@ -127,9 +134,9 @@ namespace PaperTrails
                 game.Players[1].Connected=!practice && authorized && network!=null&&network.Connected;
                 accumulator=Mathf.Min(accumulator+Time.deltaTime,.25f);
                 while(accumulator>=GameSimulation.Tick){game.Step(GameSimulation.Tick);accumulator-=GameSimulation.Tick;}
-                sendTimer-=Time.deltaTime;if(sendTimer<=0){sendTimer=.1f;Send(Packet.Snapshot(game));}
+                sendTimer-=Time.deltaTime;if(sendTimer<=0){sendTimer=.1f;SendUnreliable(Packet.Snapshot(game));}
             }
-            if(game.Phase==MatchPhase.Finished){Bank();screen=ScreenMode.Results;}
+            if(game.Phase==MatchPhase.Finished){if(hosting&&screen==ScreenMode.Match)finishSend=2f;Bank();screen=ScreenMode.Results;}
         }
         void InputDirection()
         {
@@ -162,9 +169,17 @@ namespace PaperTrails
                 dir=gestureDirection.sqrMagnitude>.5f?gestureDirection:keys;
             }
             if(dir.sqrMagnitude<.5f)return;
-            dir.Normalize();if(hosting)game.SetDirection(0,dir.x,dir.y);else Send(new Packet{type="input",x=dir.x,z=dir.y});
+            dir.Normalize();if(hosting)game.SetDirection(0,dir.x,dir.y);else SendUnreliable(new Packet{type="input",x=dir.x,z=dir.y});
         }
         void Send(Packet p){if(network!=null&&network.Connected)network.Send(PacketCodec.Encode(JsonUtility.ToJson(p)));}
+        void SendUnreliable(Packet p)
+        {
+            if(network==null||!network.Connected)return;
+            p.seq=++sendSeq;
+            string raw=PacketCodec.Encode(JsonUtility.ToJson(p));
+            if(raw.Length<=SnapshotChunks.MaxPiece){network.SendUnreliable(raw);return;}
+            foreach(string chunk in SnapshotChunks.Split(sendSeq,raw))network.SendUnreliable(chunk);
+        }
         void PollNetwork()
         {
             if(network==null)return;
@@ -182,7 +197,9 @@ namespace PaperTrails
             {
                 try
                 {
-                    Packet p=JsonUtility.FromJson<Packet>(PacketCodec.Decode(raw));if(p==null)continue;
+                    string encoded=raw;
+                    if(encoded.StartsWith("CH|")){if(!snapshotAsm.Push(encoded,out encoded))continue;}
+                    Packet p=JsonUtility.FromJson<Packet>(PacketCodec.Decode(encoded));if(p==null)continue;
                     if(hosting)
                     {
                         if(p.type=="hello")
@@ -191,7 +208,7 @@ namespace PaperTrails
                             if(!string.IsNullOrEmpty(remoteToken)&&p.token!=remoteToken){Send(new Packet{type="error",message="This session is reserved for the original second player."});continue;}
                             if(string.IsNullOrEmpty(p.token))continue;
                             remoteToken=p.token;remoteName=NormalizeName(p.name,"Player 2");authorized=true;
-                            if(screen==ScreenMode.Match||screen==ScreenMode.Results){Send(Packet.Snapshot(game));continue;}
+                            if(screen==ScreenMode.Match||screen==ScreenMode.Results){SendUnreliable(Packet.Snapshot(game));continue;}
                         }
                         if(!authorized)continue;
                         if((p.type=="hello"||p.type=="lobby")&&screen==ScreenMode.Lobby)
@@ -200,8 +217,8 @@ namespace PaperTrails
                     }
                     else
                     {
-                        if(p.type=="lobby") {remoteName=NormalizeName(p.name,"Player");remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=p.skin;remoteVote=p.vote;remoteReady=p.ready;duration=p.duration;if(screen!=ScreenMode.Lobby)screen=ScreenMode.Lobby;}
-                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==10){votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;screen=ScreenMode.Roulette;}
+                        if(p.type=="lobby") {if(screen==ScreenMode.Match)Bank();remoteName=NormalizeName(p.name,"Player");remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=p.skin;remoteVote=p.vote;remoteReady=p.ready;duration=p.duration;if(screen!=ScreenMode.Lobby)screen=ScreenMode.Lobby;}
+                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==10){if(screen==ScreenMode.Match)Bank();votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;screen=ScreenMode.Roulette;}
                         if(p.type=="state")ApplySnapshot(p);
                         if(p.type=="error")status=p.message;
                     }
@@ -215,7 +232,7 @@ namespace PaperTrails
             byte[] bytes=Convert.FromBase64String(p.owners);if(bytes.Length!=Arena.Size*Arena.Size)return;
             snapshots++;
             bool fresh=screen!=ScreenMode.Match&&screen!=ScreenMode.Results || (int)game.Arena.Kind!=p.arena;
-            if(fresh){game=new GameSimulation((ArenaKind)p.arena,(Team)p.players[0].team,(Team)p.players[1].team);banked=false;}
+            if(fresh){if(game!=null)Bank();game=new GameSimulation((ArenaKind)p.arena,(Team)p.players[0].team,(Team)p.players[1].team);banked=false;}
             game.MatchId=p.matchId;
             for(int i=0;i<bytes.Length;i++)if(game.Owners[i]!=(Team)bytes[i]){game.Owners[i]=(Team)bytes[i];game.DirtyChunks.Add((i%Arena.Size)/16+(i/Arena.Size/16)*5);}
             if(!fresh)
@@ -251,7 +268,7 @@ namespace PaperTrails
             game=new GameSimulation((ArenaKind)arena,team,remoteTeam,Environment.TickCount,duration);game.Players[0].Skin=skin;game.Players[1].Skin=remoteSkin;
             game.Players[0].Name=hosting?playerName:remoteName;game.Players[1].Name=hosting?(practice?"CPU 1":remoteName):playerName;
             game.Event=(key,id,amount)=>{if(id==localId||key=="finish"||key=="overtime")sound.Play(key,amount);};
-            view.Bind(game,localId);banked=false;accumulator=0;screen=ScreenMode.Match;Send(Packet.Snapshot(game));
+            view.Bind(game,localId);banked=false;accumulator=0;screen=ScreenMode.Match;SendUnreliable(Packet.Snapshot(game));
         }
         void Bank()
         {

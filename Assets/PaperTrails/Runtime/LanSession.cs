@@ -85,6 +85,7 @@ namespace PaperTrails
             if(outgoing.Count>32){peer?.Close();return;}
             outgoing.Enqueue(message);outgoingReady.Set();
         }
+        public void SendUnreliable(string message){Send(message);}
         public void Dispose(){disposed=true;Connected=false;listener?.Stop();peer?.Close();outgoingReady.Set();}
     }
 }

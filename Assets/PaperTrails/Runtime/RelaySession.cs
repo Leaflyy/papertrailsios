@@ -83,6 +83,12 @@ namespace PaperTrails
             using(var writer=new FastBufferWriter(message.Length*2+16,Allocator.Temp))
             {writer.WriteValueSafe(message);manager.CustomMessagingManager.SendNamedMessage("PaperTrails",peerId,writer,NetworkDelivery.ReliableFragmentedSequenced);}
         }
+        public void SendUnreliable(string message)
+        {
+            if(!Connected||disposed||manager==null)return;
+            using(var writer=new FastBufferWriter(message.Length*2+16,Allocator.Temp))
+            {writer.WriteValueSafe(message);manager.CustomMessagingManager.SendNamedMessage("PaperTrails",peerId,writer,NetworkDelivery.UnreliableSequenced);}
+        }
         public void Dispose()
         {disposed=true;Connected=false;if(manager){manager.Shutdown();UnityEngine.Object.Destroy(manager.gameObject);}}
     }
