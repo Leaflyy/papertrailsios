@@ -11,19 +11,23 @@ jobs:
     steps:
       - name: Free disk space (drop superseded Xcodes)
         run: |
+          set -euo pipefail
           df -h / | tail -1
-          APPS=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V)
-          echo "$APPS"
-          COUNT=$(echo "$APPS" | grep -c . || true)
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          # BSD sort has no -V: compare version numbers numerically.
+          VERSIONS=$(ls -d /Applications/Xcode*.app 2>/dev/null | sed -E 's/.*Xcode_([0-9.]+)\.app/\1/' | grep -E '^[0-9.]+$' | sort -t. -k1,1n -k2,2n -k3,3n || true)
+          COUNT=$(echo "$VERSIONS" | grep -c . || true)
           if [ "$COUNT" -gt 1 ]; then
-            KEEP=$(echo "$APPS" | tail -1)
-            echo "$APPS" | grep -v -F "$KEEP" | while read -r OLD; do
-              echo "Removing $OLD"
-              sudo rm -rf "$OLD"
+            KEEP=$(echo "$VERSIONS" | tail -1)
+            echo "$VERSIONS" | grep -v -F -x "$KEEP" | while read -r OLD; do
+              echo "Removing /Applications/Xcode_${OLD}.app"
+              sudo rm -rf "/Applications/Xcode_${OLD}.app"
             done
           fi
-          LATEST=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
-          sudo xcode-select -s "$LATEST/Contents/Developer"
+          LATEST=$(ls -d /Applications/Xcode*.app 2>/dev/null | sed -E 's/.*Xcode_([0-9.]+)\.app/\1/' | grep -E '^[0-9.]+$' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+          if [ -n "$LATEST" ]; then
+            sudo xcode-select -s "/Applications/Xcode_${LATEST}.app/Contents/Developer"
+          fi
           xcodebuild -version
 
       - uses: actions/checkout@v4
@@ -52,12 +56,13 @@ jobs:
 
       - name: Archive unsigned and package IPA
         run: |
+          set -euo pipefail
           cd Builds/iOS
           xcodebuild -project Unity-iPhone.xcodeproj \
             -scheme Unity-iPhone \
             -configuration Release \
             -archivePath "$PWD/build.xcarchive" \
-            archive CODE_SIGNING_ALLOWED=NO | tail -5
+            archive CODE_SIGNING_ALLOWED=NO
           mkdir -p Payload
           cp -R build.xcarchive/Products/Applications/*.app Payload/
           /usr/bin/zip -r "$PWD/../PaperTrails-unsigned.ipa" Payload
