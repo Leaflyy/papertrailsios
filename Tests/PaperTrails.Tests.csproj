@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+ <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+ <ItemGroup><Compile Include="../Assets/PaperTrails/Core/*.cs"/><Compile Include="../Assets/PaperTrails/Runtime/IGameSession.cs"/><Compile Include="../Assets/PaperTrails/Runtime/PacketCodec.cs"/><Compile Include="../Assets/PaperTrails/Runtime/LanSession.cs"/><Compile Include="../Assets/PaperTrails/Runtime/WireState.cs"/><Compile Include="RulesTests.cs"/></ItemGroup>
+</Project>

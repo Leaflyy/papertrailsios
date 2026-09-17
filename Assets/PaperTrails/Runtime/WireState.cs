@@ -1,0 +1,39 @@
+using System;
+using PaperTrails.Core;
+
+namespace PaperTrails
+{
+    [Serializable] public sealed class WirePlayer
+    {
+        public int id,team,skin,cell,captured,cuts,deaths,largest,coins;
+        public string name;
+        public float x,z,dx,dz,respawn;
+        public bool alive,connected;
+        public int[] trail;
+        public GridPoint[] path;
+        public WirePlayer() { }
+        public WirePlayer(Player p){id=p.Id;name=p.Name;team=(int)p.Team;skin=p.Skin;cell=p.Cell;captured=p.Captured;cuts=p.Cuts;deaths=p.Deaths;largest=p.Largest;coins=p.Coins;x=p.X;z=p.Z;dx=p.DX;dz=p.DZ;respawn=p.Respawn;alive=p.Alive;connected=p.Connected;trail=p.Trail.ToArray();path=p.TrailPath.ToArray();}
+        public void Apply(Player p)
+        {
+            p.Name=name;p.Team=(Team)team;p.Skin=skin;p.Cell=cell;p.X=x;p.Z=z;p.DX=dx;p.DZ=dz;p.Alive=alive;p.Connected=connected;p.Respawn=respawn;
+            p.Captured=captured;p.Cuts=cuts;p.Deaths=deaths;p.Largest=largest;p.Coins=coins;
+            p.Trail.Clear();p.TrailSet.Clear();if(trail!=null)foreach(int c in trail){p.Trail.Add(c);p.TrailSet.Add(c);}
+            p.TrailPath.Clear();if(path!=null)p.TrailPath.AddRange(path);
+        }
+    }
+    [Serializable] public sealed class Packet
+    {
+        public string type,token,name,owners,message,matchId;
+        public int team,skin,vote,arena,phase,winner,red,blue;
+        public float x,z,remaining,duration;
+        public bool ready;
+        public int[] votes,coins0,coins1;
+        public WirePlayer[] players;
+        public static Packet Snapshot(GameSimulation game)
+        {
+            var bytes=new byte[game.Owners.Length];for(int i=0;i<bytes.Length;i++)bytes[i]=(byte)game.Owners[i];
+            var p=new Packet{type="state",matchId=game.MatchId,arena=(int)game.Arena.Kind,owners=Convert.ToBase64String(bytes),remaining=game.Remaining,phase=(int)game.Phase,winner=(int)game.Winner,red=game.RedCount,blue=game.BlueCount,coins0=game.Coins[0].ToArray(),coins1=game.Coins[1].ToArray(),players=new WirePlayer[10]};
+            for(int i=0;i<10;i++)p.players[i]=new WirePlayer(game.Players[i]);return p;
+        }
+    }
+}

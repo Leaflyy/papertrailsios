@@ -1,0 +1,4 @@
+# GitHub rejects plain files over 100MB, so the two giant meshes ride via LFS.
+# Everything else (incl. all PNGs) stays in regular git.
+Tank.fbx filter=lfs diff=lfs merge=lfs -text
+SportsCar.fbx filter=lfs diff=lfs merge=lfs -text
