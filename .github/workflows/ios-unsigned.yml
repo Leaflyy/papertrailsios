@@ -13,22 +13,28 @@ jobs:
         run: |
           set -euo pipefail
           df -h / | tail -1
-          ls -d /Applications/Xcode*.app 2>/dev/null || true
-          # BSD sort has no -V: compare version numbers numerically.
-          VERSIONS=$(ls -d /Applications/Xcode*.app 2>/dev/null | sed -E 's/.*Xcode_([0-9.]+)\.app/\1/' | grep -E '^[0-9.]+$' | sort -t. -k1,1n -k2,2n -k3,3n || true)
-          COUNT=$(echo "$VERSIONS" | grep -c . || true)
-          if [ "$COUNT" -gt 1 ]; then
-            KEEP=$(echo "$VERSIONS" | tail -1)
-            echo "$VERSIONS" | grep -v -F -x "$KEEP" | while read -r OLD; do
-              echo "Removing /Applications/Xcode_${OLD}.app"
-              sudo rm -rf "/Applications/Xcode_${OLD}.app"
-            done
-          fi
-          LATEST=$(ls -d /Applications/Xcode*.app 2>/dev/null | sed -E 's/.*Xcode_([0-9.]+)\.app/\1/' | grep -E '^[0-9.]+$' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
-          if [ -n "$LATEST" ]; then
-            sudo xcode-select -s "/Applications/Xcode_${LATEST}.app/Contents/Developer"
-          fi
+          ver_of() { /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$1/Contents/Info.plist" 2>/dev/null || echo "0"; }
+          # Pick the newest Xcode that is actually usable; version number alone
+          # is not trustworthy (stubs sort high but have no developer dir).
+          KEEP=""; KEEPVER="0"
+          for APP in /Applications/Xcode*.app; do
+            [ -e "$APP" ] || continue
+            if [ -x "$APP/Contents/Developer/usr/bin/xcodebuild" ]; then
+              V=$(ver_of "$APP")
+              HIGHEST=$(printf "%s\n%s\n" "$V" "$KEEPVER" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+              if [ "$HIGHEST" = "$V" ]; then KEEP="$APP"; KEEPVER="$V"; fi
+            else
+              echo "Skipping invalid: $APP"
+            fi
+          done
+          if [ -z "$KEEP" ]; then echo "ERROR: no valid Xcode found"; ls /Applications | grep -i xcode || true; exit 1; fi
+          echo "Keeper: $KEEP ($KEEPVER)"
+          for APP in /Applications/Xcode_*.app; do
+            if [ "$APP" != "$KEEP" ]; then echo "Removing $APP"; sudo rm -rf "$APP"; fi
+          done
+          sudo xcode-select -s "$KEEP/Contents/Developer"
           xcodebuild -version
+          df -h / | tail -1
 
       - uses: actions/checkout@v4
         with:
