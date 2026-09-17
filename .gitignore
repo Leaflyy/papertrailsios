@@ -1,0 +1,18 @@
+Library/
+Temp/
+Obj/
+Logs/
+UserSettings/
+Builds/
+Tests/bin/
+Tests/obj/
+*.csproj.user
+# UVCS workspace metadata (this folder is versioned in Unity Version Control).
+.plastic/
+# UVCS-only ignore file.
+/ignore.conf
+# Third-party reference drops (incl. commercial APK) and installer debris.
+Reference/
+Tools/
+*.log
+.utmp/
