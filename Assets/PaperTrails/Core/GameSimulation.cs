@@ -215,9 +215,10 @@ namespace PaperTrails.Core
             int hub=Arena.Hubs[(int)p.Team-1];
             int cell=hub;
             Team enemy=p.Team==Team.Red?Team.Blue:Team.Red;
+            int slot=0;foreach(Player o in Players){if(o!=null&&o!=p&&o.Team==p.Team)slot++;}
             for(int attempt=0;attempt<12&&cell==hub;attempt++)
             {
-                double a=p.Id*2.4+attempt*.7;
+                double a=slot*2.4+attempt*.7;
                 int radius=2+attempt/4;
                 int cx=hub%Arena.Size+(int)Math.Round(Math.Cos(a)*radius),cz=hub/Arena.Size+(int)Math.Round(Math.Sin(a)*radius);
                 if(!Arena.Playable(cx,cz))continue;
