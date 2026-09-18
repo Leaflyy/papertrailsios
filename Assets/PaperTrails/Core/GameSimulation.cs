@@ -7,7 +7,7 @@ namespace PaperTrails.Core
     public enum Personality { Aggressor, Explorer, Balanced }
     [Serializable] public sealed class Player
     {
-        public int Id, Skin, Cell, Captured, Cuts, Deaths, Largest, Coins, ExcursionLeg;
+        public int Id, Skin, Cell, Captured, Cuts, Deaths, Largest, Coins, ExcursionLeg, Objective = -1;
         public string Name;
         public Team Team;
         public bool Human, Connected, Alive = true, CanStartTrail = true;
@@ -42,7 +42,6 @@ namespace PaperTrails.Core
         readonly bool[] visited;
         readonly int[] queue, parent;
         float coinTimer;
-        readonly int[] teamObjectives = {-1,-1};
 
         public GameSimulation(ArenaKind arena, Team first, Team second, int seed = 12345, float duration = 300)
         {
@@ -214,9 +213,22 @@ namespace PaperTrails.Core
         void Spawn(Player p)
         {
             int hub=Arena.Hubs[(int)p.Team-1];
-            p.Cell=hub;p.X=hub%Arena.Size+.5f;p.Z=hub/Arena.Size+.5f;
+            int cell=hub;
+            Team enemy=p.Team==Team.Red?Team.Blue:Team.Red;
+            for(int attempt=0;attempt<12&&cell==hub;attempt++)
+            {
+                double a=p.Id*2.4+attempt*.7;
+                int radius=2+attempt/4;
+                int cx=hub%Arena.Size+(int)Math.Round(Math.Cos(a)*radius),cz=hub/Arena.Size+(int)Math.Round(Math.Sin(a)*radius);
+                if(!Arena.Playable(cx,cz))continue;
+                int c=cz*Arena.Size+cx;
+                if(Owners[c]==enemy||Arena.Protected(c,enemy)||Arena.DistanceSquared(c,hub)>9)continue;
+                bool taken=false;foreach(Player o in Players)if(o!=null&&o!=p&&o.Alive&&o.Cell==c){taken=true;break;}
+                if(!taken)cell=c;
+            }
+            p.Cell=cell;p.X=cell%Arena.Size+.5f;p.Z=cell/Arena.Size+.5f;
             double angle=(p.Id*.618+random.NextDouble()*.1)*Math.PI*2;
-            p.DX=p.DesiredX=(float)Math.Cos(angle);p.DZ=p.DesiredZ=(float)Math.Sin(angle);p.Alive=true;p.CanStartTrail=true;p.Respawn=0;p.Target=-1;p.Route.Clear();
+            p.DX=p.DesiredX=(float)Math.Cos(angle);p.DZ=p.DesiredZ=(float)Math.Sin(angle);p.Alive=true;p.CanStartTrail=true;p.Respawn=0;p.Target=-1;p.Objective=-1;p.Route.Clear();
             Event?.Invoke("respawn",p.Id,0);
         }
         static void ClearTrail(Player p) { p.Trail.Clear();p.TrailSet.Clear();p.TrailPath.Clear(); }
@@ -297,7 +309,7 @@ namespace PaperTrails.Core
                 if(p.ExcursionLeg==0)
                 {
                     p.ExcursionLeg=1;
-                    int width=random.Next(5,p.Personality==Personality.Explorer?10:15);
+                    int width=random.Next(8,p.Personality==Personality.Explorer?16:22);
                     for(int sign=-1;sign<=1;sign+=2)
                     {
                         int x=p.Cell%Arena.Size+(int)Math.Round(-p.DZ*width*sign),z=p.Cell/Arena.Size+(int)Math.Round(p.DX*width*sign);
@@ -309,22 +321,20 @@ namespace PaperTrails.Core
             p.ExcursionLeg=0;
             if(p.Personality==Personality.Aggressor || p.Personality==Personality.Balanced && random.Next(2)==0)
             {
-                int nearest=Personality.Aggressor==p.Personality?900:625;
+                int nearest=Personality.Aggressor==p.Personality?320:260;
                 foreach(Player enemy in Players)if(enemy.Team!=p.Team)
                     foreach(int c in enemy.Trail){int d=Arena.DistanceSquared(c,p.Cell);if(d<nearest){nearest=d;target=c;}}
             }
             if(target<0)
             {
-                int teamIndex=(int)p.Team-1;
-                int objective=teamObjectives[teamIndex];
-                if(objective<0||Owners[objective]==p.Team||random.Next(12)==0)objective=FindTeamObjective(p.Team);
-                teamObjectives[teamIndex]=objective;
-                target=FindStrategicTarget(p,objective);
+                if(p.Objective<0||Owners[p.Objective]==p.Team||random.Next(12)==0||NearAllyTarget(p,p.Objective))p.Objective=FindPersonalObjective(p);
+                if(p.Objective<0)p.Objective=FindTeamObjective(p.Team);
+                target=FindStrategicTarget(p,p.Objective);
                 int radius=p.Personality==Personality.Explorer?5:p.Personality==Personality.Aggressor?3:4;
                 for(int attempt=0;attempt<80;attempt++)
                 {
                     if(target>=0)break;
-                    int ox=objective>=0?objective%Arena.Size:p.Cell%Arena.Size,oz=objective>=0?objective/Arena.Size:p.Cell/Arena.Size;
+                    int ox=p.Objective>=0?p.Objective%Arena.Size:p.Cell%Arena.Size,oz=p.Objective>=0?p.Objective/Arena.Size:p.Cell/Arena.Size;
                     int x=ox+random.Next(-radius,radius+1),z=oz+random.Next(-radius,radius+1);
                     if(Arena.Playable(x,z)&&!Arena.Protected(z*Arena.Size+x,p.Team==Team.Red?Team.Blue:Team.Red)&&Owners[z*Arena.Size+x]!=p.Team){target=z*Arena.Size+x;break;}
                 }
@@ -334,6 +344,7 @@ namespace PaperTrails.Core
         int FindStrategicTarget(Player p,int objective)
         {
             Team enemy=p.Team==Team.Red?Team.Blue:Team.Red;int best=-1,bestScore=int.MinValue;
+            int myQuad=((p.Cell%Arena.Size)>=40?1:0)+((p.Cell/Arena.Size)>=40?2:0);
             for(int i=0;i<Owners.Length;i++)
             {
                 if(!Arena.Mask[i]||Owners[i]==p.Team||Arena.Protected(i,enemy))continue;
@@ -342,10 +353,41 @@ namespace PaperTrails.Core
                 if(teamAdjacent==0)continue;
                 int score=teamAdjacent*90+neutralAdjacent*18+enemyAdjacent*(p.Personality==Personality.Aggressor?34:8)-Arena.DistanceSquared(i,p.Cell)*2;
                 if(i==objective)score+=55;
-                foreach(Player teammate in Players)if(teammate!=p&&teammate.Team==p.Team&&teammate.Target==i)score-=80;
+                if((((i%Arena.Size)>=40?1:0)+((i/Arena.Size)>=40?2:0))==myQuad)score+=70;
+                foreach(Player teammate in Players)
+                {
+                    if(teammate==p||teammate.Team!=p.Team||!teammate.Alive)continue;
+                    int anchor=teammate.Target>=0?teammate.Target:teammate.Cell;
+                    if(Arena.DistanceSquared(anchor,i)<144)score-=160;
+                }
                 if(Owners[i]==enemy&&p.Personality==Personality.Explorer)score-=45;
                 if(Owners[i]==Team.Neutral&&p.Personality==Personality.Aggressor)score-=10;
                 if(score>bestScore){bestScore=score;best=i;}
+            }
+            return best;
+        }
+        bool NearAllyTarget(Player p,int cell)
+        {
+            foreach(Player mate in Players)
+            {
+                if(mate==p||mate.Team!=p.Team||!mate.Alive)continue;
+                int anchor=mate.Target>=0?mate.Target:mate.Cell;
+                if(Arena.DistanceSquared(anchor,cell)<144)return true;
+            }
+            return false;
+        }
+        int FindPersonalObjective(Player p)
+        {
+            int mine=((p.Cell%Arena.Size)>=40?1:0)+((p.Cell/Arena.Size)>=40?2:0);
+            Team enemy=p.Team==Team.Red?Team.Blue:Team.Red;int best=-1,bestScore=int.MaxValue;
+            for(int i=0;i<Owners.Length;i++)
+            {
+                if(!Arena.Mask[i]||Owners[i]==p.Team||Arena.Protected(i,enemy))continue;
+                bool frontier=false;foreach(int n in Arena.Neighbors(i))if(Owners[n]==p.Team){frontier=true;break;}
+                if(!frontier||NearAllyTarget(p,i))continue;
+                int score=0;foreach(Player q in Players)if(q.Team==p.Team&&q.Alive)score+=Arena.DistanceSquared(i,q.Cell);
+                if((((i%Arena.Size)>=40?1:0)+((i/Arena.Size)>=40?2:0))==mine)score-=1500;
+                if(score<bestScore){bestScore=score;best=i;}
             }
             return best;
         }

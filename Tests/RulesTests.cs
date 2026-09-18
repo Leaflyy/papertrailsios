@@ -25,6 +25,7 @@ static class RulesTests
         }
         foreach(Team a in new[]{Team.Red,Team.Blue})foreach(Team b in new[]{Team.Red,Team.Blue})
         {var g=new GameSimulation(ArenaKind.Cross,a,b);Check(g.Players.Count(p=>p.Team==Team.Red)==5&&g.Players.Count(p=>p.Team==Team.Blue)==5,"5v5 "+a+"/"+b);}
+        {var g=new GameSimulation(ArenaKind.Cross,Team.Red,Team.Blue);Check(g.Players.Where(p=>p.Team==Team.Red).Select(p=>p.Cell).Distinct().Count()>1&&g.Players.Where(p=>p.Team==Team.Blue).Select(p=>p.Cell).Distinct().Count()>1,"spawn scatters teammates around hubs");}
         {
             var g=Game();var p=g.Players[0];var friend=g.Players[1];int c=C(40,40);CrossingTrail(friend);g.ResolveTrailContacts(p,40.5f,40,40.5f,41);g.EnterCell(p,c);
             Check(p.Alive&&friend.Alive&&friend.Trail.Count==1&&p.Trail.Count==1,"friendly trails independently overlap");

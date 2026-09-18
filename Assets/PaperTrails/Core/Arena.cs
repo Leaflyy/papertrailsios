@@ -37,7 +37,21 @@ namespace PaperTrails.Core
             }
             if (candidates.Count < 2) throw new InvalidOperationException("Arena has no valid spawn hubs");
             Hubs[0] = candidates[0]; Hubs[1] = candidates[candidates.Count - 1];
-            for(int pass=0;pass<3;pass++)
+            // Separate hubs by corridor (BFS) distance, not Euclidean: on winding
+            // maps like Spiral the Euclidean-diameter pair can sit on adjacent
+            // arms or cram one team into a dead end. Fall back to Euclidean when
+            // the corridor pair would violate the distinct-hubs floor.
+            int endA=FarthestCorridor(candidates[0],candidates);
+            int endB=FarthestCorridor(endA,candidates);
+            bool placed=false;
+            if(Kind==ArenaKind.Spiral)
+            {
+                int thirdA=ThirdPoint(endA,endB,candidates,1);
+                int thirdB=ThirdPoint(endA,endB,candidates,2);
+                if(thirdA>=0&&thirdB>=0&&DistanceSquared(thirdA,thirdB)>100){Hubs[0]=thirdA;Hubs[1]=thirdB;placed=true;}
+            }
+            if(!placed&&DistanceSquared(endA,endB)>100){Hubs[0]=endA;Hubs[1]=endB;placed=true;}
+            if(!placed)for(int pass=0;pass<3;pass++)
             {
                 Hubs[1]=Farthest(Hubs[0],candidates);Hubs[0]=Farthest(Hubs[1],candidates);
             }
@@ -50,6 +64,44 @@ namespace PaperTrails.Core
             {
                 int d = DistanceSquared(a, b);
                 if (d > distance) { best = b; distance = d; }
+            }
+            return best;
+        }
+        int FarthestCorridor(int from, List<int> candidates)
+        {
+            int[] dist = CorridorDistances(from);
+            int best = from, bestDist = -1;
+            foreach (int b in candidates) if (dist[b] > bestDist) { best = b; bestDist = dist[b]; }
+            return best;
+        }
+        int[] CorridorDistances(int from)
+        {
+            var dist = new int[Mask.Length];
+            for (int i = 0; i < dist.Length; i++) dist[i] = -1;
+            var queue = new Queue<int>(); dist[from] = 0; queue.Enqueue(from);
+            while (queue.Count > 0)
+            {
+                int c = queue.Dequeue();
+                foreach (int n in Neighbors(c))
+                    if (Mask[n] && dist[n] < 0) { dist[n] = dist[c] + 1; queue.Enqueue(n); }
+            }
+            return dist;
+        }
+        // Point about one (which=1) or two (which=2) thirds along the corridor
+        // diameter from endA to endB. Returns -1 when no on-path candidate fits.
+        int ThirdPoint(int endA, int endB, List<int> candidates, int which)
+        {
+            int[] distA = CorridorDistances(endA);
+            int[] distB = CorridorDistances(endB);
+            int length = distA[endB];
+            if (length <= 0) return -1;
+            int want = which == 1 ? length / 3 : length * 2 / 3;
+            int best = -1, bestErr = int.MaxValue;
+            foreach (int c in candidates)
+            {
+                if (distA[c] < 0 || distB[c] < 0 || distA[c] + distB[c] != length) continue;
+                int err = Math.Abs(distA[c] - want);
+                if (err < bestErr) { bestErr = err; best = c; }
             }
             return best;
         }
