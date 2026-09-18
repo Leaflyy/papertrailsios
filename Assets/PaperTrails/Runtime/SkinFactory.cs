@@ -5,9 +5,10 @@ namespace PaperTrails
     public static class SkinFactory
     {
         public static readonly string[] Names={"Cube","Sphere","Star","Heart","Cat","Dog","Husky","Duck","Shark","Penguin","Frog","Dinosaur","Bee","Sports Car","Tank","UFO","Rocket","Robot","Astronaut","Dragon","Ghost","Slime","Burger","Pizza","Donut","Banana","Traffic Cone","Rubber Duck","Eyeball","Knife","Bronze Block","Silver Block","Gold Block","Galaxy Cube"};
-        static readonly System.Collections.Generic.Dictionary<int,string> PremiumModels=new System.Collections.Generic.Dictionary<int,string>{{4,"Skins/Cat/Cat"},{5,"Skins/Dog/Dog"},{6,"Skins/Husky/Husky"},{7,"Skins/Duck/Duck"},{8,"Skins/Shark/Shark"},{9,"Skins/Penguin/Penguin"},{10,"Skins/Frog/Frog"},{11,"Skins/Dinosaur/Dinosaur"},{12,"Skins/Bee/Bee"},{13,"Skins/SportsCar/SportsCar"},{14,"Skins/Tank/Tank"},{15,"Skins/UFO/UFO"},{17,"Skins/Robot/Robot"}};
-        static readonly System.Collections.Generic.Dictionary<int,float> PremiumYaw=new System.Collections.Generic.Dictionary<int,float>{{4,0f},{6,0f},{13,-90f},{14,-90f},{17,0f}};
-        static readonly System.Collections.Generic.Dictionary<int,float> PremiumSize=new System.Collections.Generic.Dictionary<int,float>{{4,1.5f},{5,1.5f},{6,1.5f},{7,1.5f},{8,1.5f},{9,1.5f},{10,1.5f},{11,1.5f},{12,1.5f},{13,1.3f},{14,1.3f},{15,1.3f},{17,1.6f}};
+        static readonly System.Collections.Generic.Dictionary<int,string> PremiumModels=new System.Collections.Generic.Dictionary<int,string>{{4,"Skins/Cat/Cat"},{5,"Skins/Dog/Dog"},{6,"Skins/Husky/Husky"},{7,"Skins/Duck/Duck"},{8,"Skins/Shark/Shark"},{9,"Skins/Penguin/Penguin"},{10,"Skins/Frog/Frog"},{11,"Skins/Dinosaur/Dinosaur"},{12,"Skins/Bee/Bee"},{13,"Skins/SportsCar/SportsCar"},{14,"Skins/Tank/Tank"},{15,"Skins/UFO/UFO"},{16,"Skins/Rocket/Rocket"},{17,"Skins/Robot/Robot"},{18,"Skins/Astronaut/Astronaut"},{19,"Skins/Dragon/Dragon"},{20,"Skins/Ghost/Ghost"},{21,"Skins/Slime/Slime"},{22,"Skins/Burger/Burger"},{23,"Skins/Pizza/Pizza"},{24,"Skins/Donut/Donut"},{25,"Skins/Banana/Banana"},{26,"Skins/TrafficCone/TrafficCone"},{27,"Skins/RubberDuck/RubberDuck"},{28,"Skins/Eyeball/Eyeball"},{29,"Skins/Knife/Knife"}};
+        static readonly System.Collections.Generic.Dictionary<int,float> PremiumYaw=new System.Collections.Generic.Dictionary<int,float>{{4,0f},{6,0f},{7,-90f},{13,-90f},{14,-90f},{17,0f},{29,180f}};
+        static readonly System.Collections.Generic.Dictionary<int,float> PremiumPitch=new System.Collections.Generic.Dictionary<int,float>{{29,90f}};
+        static readonly System.Collections.Generic.Dictionary<int,float> PremiumSize=new System.Collections.Generic.Dictionary<int,float>{{4,1.5f},{5,1.5f},{6,1.5f},{7,1.5f},{8,1.5f},{9,1.5f},{10,1.5f},{11,1.5f},{12,1.5f},{13,1.3f},{14,1.3f},{15,1.3f},{16,1.3f},{17,1.6f},{18,1.4f},{19,1.5f},{20,1.4f},{21,1.3f},{22,1.3f},{23,1.3f},{24,1.3f},{25,1.3f},{26,0.95f},{27,1.4f},{28,1.2f},{29,1.3f}};
         static void WirePremiumTextures(GameObject model,int skin)
         {
             // The FBX material import loses its texture links when the model file
@@ -19,7 +20,7 @@ namespace PaperTrails
             var albedo=Resources.Load<Texture2D>(folder+"_Albedo");
             var normal=Resources.Load<Texture2D>(folder+"_Normal");
             var metallic=Resources.Load<Texture2D>(folder+"_Metallic");
-            bool metal=skin==13||skin==14||skin==15||skin==17;
+                bool metal=skin==13||skin==14||skin==15||skin==16||skin==17||skin==18||skin==29;
             foreach(var r in model.GetComponentsInChildren<Renderer>())
             {
                 var m=r.sharedMaterial;
@@ -49,7 +50,8 @@ namespace PaperTrails
             model.transform.SetParent(root.transform,false);
             model.transform.localPosition=Vector3.zero;
             float yaw=PremiumYaw.TryGetValue(skin,out var y)?y:0f;
-            model.transform.localRotation=Quaternion.Euler(0,yaw,0)*model.transform.localRotation;
+            float pitch=PremiumPitch.TryGetValue(skin,out var ph)?ph:0f;
+            model.transform.localRotation=Quaternion.Euler(0,yaw,0)*Quaternion.Euler(pitch,0,0)*model.transform.localRotation;
             foreach(var c in model.GetComponentsInChildren<Collider>())Object.Destroy(c);
             foreach(var r in model.GetComponentsInChildren<Renderer>())r.shadowCastingMode=UnityEngine.Rendering.ShadowCastingMode.On;
             WirePremiumTextures(model,skin);

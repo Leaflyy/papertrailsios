@@ -11,6 +11,8 @@ namespace PaperTrails
     public sealed class PaperTrailsApp : MonoBehaviour
     {
         enum ScreenMode { Menu, Lobby, Roulette, Match, Results, Collection }
+        static readonly int ArenaCount=Enum.GetValues(typeof(ArenaKind)).Length;
+        static readonly string[] ArenaNames={"Star","USA","Donut","Cross","Crescent Moon","Skull","Hourglass","Butterfly","Heart","Spiral","Diamond","Lightning Bolt","Mustache","Flare","Cash","Tilda","Triangle","Circle","Square","Parallelogram","Cool S","Cubic Plane Curve"};
         ScreenMode screen;
         GameSimulation game;
         GameView view;
@@ -30,7 +32,7 @@ namespace PaperTrails
         string address="192.168.1.10",status="",remoteToken="",token,reveal="",recoveryCode="",restoreCode="",playerName="Player",remoteName="Player 2",lastCode="",lastAddress="",pendingLink=null;
         readonly HashSet<int> unlocked=new HashSet<int>();
         readonly List<Texture2D> previews=new List<Texture2D>();
-        Vector2 touchAnchor,gestureDirection,collectionScroll,lobbyScroll,rouletteScroll;
+        Vector2 touchAnchor,gestureDirection,collectionScroll,lobbyScroll,rouletteScroll,voteScroll;
         bool touchActive;
         GUIStyle title,label,small,button,heading;
         float uiWidth,uiHeight,uiScale=1,suppressClickUntil;
@@ -50,7 +52,7 @@ namespace PaperTrails
             unlocked.Add(0);foreach(string s in PlayerPrefs.GetString("unlocked","0").Split(','))if(int.TryParse(s,out int id)&&id>=0&&id<SkinFactory.Names.Length)unlocked.Add(id);
             if(!unlocked.Contains(skin))skin=0;
             recoveryCode=CreateRecoveryCode();
-            for(int i=0;i<10;i++)
+            for(int i=0;i<ArenaCount;i++)
             {
                 var a=new Arena((ArenaKind)i);var tex=new Texture2D(Arena.Size,Arena.Size);var pixels=new Color32[a.Mask.Length];
                 for(int c=0;c<pixels.Length;c++)pixels[c]=a.Mask[c]?new Color(.76f,.83f,.85f):new Color(0,0,0,0);
@@ -86,7 +88,7 @@ namespace PaperTrails
             yield return new WaitForSeconds(.5f);
             foreach(ScreenMode mode in new[]{ScreenMode.Menu,ScreenMode.Lobby,ScreenMode.Collection,ScreenMode.Roulette,ScreenMode.Results})
             {
-                if(mode==ScreenMode.Roulette){votes=new[]{0,1,2,3,4,5,6,7,8,9};rouletteStart=Time.time;}
+                if(mode==ScreenMode.Roulette){votes=new int[ArenaCount];for(int vi=0;vi<ArenaCount;vi++)votes[vi]=vi;rouletteStart=Time.time;}
                 if(mode==ScreenMode.Results){game.Winner=Team.Red;}
                 screen=mode;yield return new WaitForSeconds(.6f);yield return CaptureFrame(System.IO.Path.Combine(path,mode.ToString()+".png"));yield return new WaitForSeconds(.4f);
             }
@@ -112,7 +114,7 @@ namespace PaperTrails
                 if(touch.phase==TouchPhase.Moved&&Mathf.Abs(touch.deltaPosition.y)>3)
                 {
                     float delta=touch.deltaPosition.y/uiScale;suppressClickUntil=Time.unscaledTime+.15f;
-                    if(screen==ScreenMode.Lobby)lobbyScroll.y=Mathf.Max(0,lobbyScroll.y+delta);
+                    if(screen==ScreenMode.Lobby){if(uiWidth<640)lobbyScroll.y=Mathf.Max(0,lobbyScroll.y+delta);else voteScroll.y=Mathf.Max(0,voteScroll.y+delta);}
                     if(screen==ScreenMode.Collection)collectionScroll.y=Mathf.Max(0,collectionScroll.y+delta);
                     if(screen==ScreenMode.Roulette)rouletteScroll.y=Mathf.Max(0,rouletteScroll.y+delta);
                 }
@@ -217,13 +219,13 @@ namespace PaperTrails
                         }
                         if(!authorized)continue;
                         if((p.type=="hello"||p.type=="lobby")&&screen==ScreenMode.Lobby)
-                        {remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=Mathf.Clamp(p.skin,0,SkinFactory.Names.Length-1);remoteVote=Mathf.Clamp(p.vote,0,9);remoteReady=p.ready;SendLobby();}
+                        {remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=Mathf.Clamp(p.skin,0,SkinFactory.Names.Length-1);remoteVote=Mathf.Clamp(p.vote,0,ArenaCount-1);remoteReady=p.ready;SendLobby();}
                         if(p.type=="input"&&screen==ScreenMode.Match)game.SetDirection(1,p.x,p.z);
                     }
                     else
                     {
                         if(p.type=="lobby") {reconnecting=false;if(screen==ScreenMode.Match)Bank();remoteName=NormalizeName(p.name,"Player");remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=p.skin;remoteVote=p.vote;remoteReady=p.ready;duration=p.duration;if(screen!=ScreenMode.Lobby)screen=ScreenMode.Lobby;}
-                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==10){reconnecting=false;if(screen==ScreenMode.Match)Bank();votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;screen=ScreenMode.Roulette;}
+                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==ArenaCount){reconnecting=false;if(screen==ScreenMode.Match)Bank();votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;screen=ScreenMode.Roulette;}
                         if(p.type=="state")ApplySnapshot(p);
                         if(p.type=="error")status=p.message;
                     }
@@ -233,7 +235,7 @@ namespace PaperTrails
         }
         void ApplySnapshot(Packet p)
         {
-            if(p.players==null||p.players.Length!=10||p.arena<0||p.arena>9)return;
+            if(p.players==null||p.players.Length!=10||p.arena<0||p.arena>=ArenaCount)return;
             byte[] bytes=Convert.FromBase64String(p.owners);if(bytes.Length!=Arena.Size*Arena.Size)return;
             snapshots++;reconnecting=false;lastRxTime=Time.unscaledTime;
             bool fresh=screen!=ScreenMode.Match&&screen!=ScreenMode.Results || (int)game.Arena.Kind!=p.arena;
@@ -293,9 +295,9 @@ namespace PaperTrails
         }
         void Roulette()
         {
-            votes=new int[10];votes[0]=vote;votes[1]=practice?UnityEngine.Random.Range(0,10):remoteVote;
-            for(int i=2;i<10;i++)votes[i]=UnityEngine.Random.Range(0,10);
-            selectedArena=votes[UnityEngine.Random.Range(0,10)];rouletteStart=Time.time;nextClick=0;screen=ScreenMode.Roulette;
+            votes=new int[ArenaCount];votes[0]=vote;votes[1]=practice?UnityEngine.Random.Range(0,ArenaCount):remoteVote;
+            for(int i=2;i<ArenaCount;i++)votes[i]=UnityEngine.Random.Range(0,ArenaCount);
+            selectedArena=votes[UnityEngine.Random.Range(0,ArenaCount)];rouletteStart=Time.time;nextClick=0;screen=ScreenMode.Roulette;
             Send(new Packet{type="roulette",votes=votes,arena=selectedArena});
         }
         void StartMatch(int arena)
@@ -392,10 +394,10 @@ namespace PaperTrails
                 case ScreenMode.Lobby: LobbyUI(x,w);break;
                 case ScreenMode.Roulette:
                     GUI.Label(new Rect(x,145,w,42),"Arena roulette",heading);
-                    int index=Time.time-rouletteStart>4?Array.IndexOf(votes,selectedArena):(int)((Time.time-rouletteStart)*12)%10;
+                    int index=Time.time-rouletteStart>4?Array.IndexOf(votes,selectedArena):(int)((Time.time-rouletteStart)*12)%ArenaCount;
                     int cols=w<600?2:5;float cw=(w-20)/cols;
-                    rouletteScroll=GUI.BeginScrollView(new Rect(x,215,w,uiHeight-240),rouletteScroll,new Rect(0,0,w-20,Mathf.Ceil(10f/cols)*150));
-                    for(int i=0;i<10;i++){var r=new Rect(i%cols*cw,i/cols*150,cw-10,140);Fill(r,i==index?new Color(.2f,.55f,.48f):new Color(.13f,.17f,.2f));GUI.DrawTexture(new Rect(r.x+15,r.y+8,r.width-30,90),previews[votes[i]],ScaleMode.ScaleToFit);GUI.Label(new Rect(r.x+8,r.y+104,r.width-16,35),ArenaName(votes[i]),small);}GUI.EndScrollView();break;
+                    rouletteScroll=GUI.BeginScrollView(new Rect(x,215,w,uiHeight-240),rouletteScroll,new Rect(0,0,w-20,Mathf.Ceil(ArenaCount/(float)cols)*150));
+                    for(int i=0;i<ArenaCount;i++){var r=new Rect(i%cols*cw,i/cols*150,cw-10,140);Fill(r,i==index?new Color(.2f,.55f,.48f):new Color(.13f,.17f,.2f));GUI.DrawTexture(new Rect(r.x+15,r.y+8,r.width-30,90),previews[votes[i]],ScaleMode.ScaleToFit);GUI.Label(new Rect(r.x+8,r.y+104,r.width-16,35),ArenaName(votes[i]),small);}GUI.EndScrollView();break;
                 case ScreenMode.Results:
                     GUI.contentColor=GameView.TeamColor(game.Winner);GUI.Label(new Rect(x,160,w,60),game.Winner.ToString().ToUpper()+" WINS",title);GUI.contentColor=Color.white;
                     GUI.Label(new Rect(x,240,w,90),$"Red {Percent(game.RedCount):0.0}%     Blue {Percent(game.BlueCount):0.0}%",heading);
@@ -418,13 +420,15 @@ namespace PaperTrails
             if(Btn(new Rect(x,282,w*.48f,42),"Skin: "+SkinFactory.Names[skin])){var all=new List<int>(unlocked);all.Sort();skin=all[(all.IndexOf(skin)+1)%all.Count];Save();ready=false;SendLobby();}
             if(hosting){GUI.Label(new Rect(x+w*.52f,285,110,30),"Minutes",small);duration=GUI.HorizontalSlider(new Rect(x+w*.66f,302,w*.24f,20),duration,60,600);duration=Mathf.Round(duration/60)*60;GUI.Label(new Rect(x+w*.92f,285,50,30),(duration/60).ToString("0"),label);}
             GUI.Label(new Rect(x,342,w,34),"Your arena vote",label);
-            for(int i=0;i<10;i++)
+            voteScroll=GUI.BeginScrollView(new Rect(x,382,w,200),voteScroll,new Rect(0,0,w-25,Mathf.Ceil(ArenaCount/5f)*104));
+            for(int i=0;i<ArenaCount;i++)
             {
-                float cw=w/5;Rect r=new Rect(x+i%5*cw,382+i/5*104,cw-8,96);Fill(r,vote==i?new Color(.18f,.4f,.34f):new Color(.12f,.16f,.19f));
+                float cw=(w-25)/5;Rect r=new Rect(i%5*cw,(i/5)*104,cw-8,96);Fill(r,vote==i?new Color(.18f,.4f,.34f):new Color(.12f,.16f,.19f));
                 GUI.DrawTexture(new Rect(r.x+5,r.y+3,r.width-10,62),previews[i],ScaleMode.ScaleToFit);
                 if(GUI.Button(r,GUIContent.none,GUIStyle.none)&&Time.unscaledTime>suppressClickUntil){vote=i;ready=false;SendLobby();}
                 GUI.Label(new Rect(r.x+4,r.y+64,r.width-8,30),ArenaName(i),small);
             }
+            GUI.EndScrollView();
             if(Btn(new Rect(x,606,w*.28f,50),ready?"Ready ✓":"Ready")){ready=!ready;SendLobby();}
             GUI.Label(new Rect(x+w*.32f,616,w*.33f,35),remoteReady?"Partner ready":"Partner not ready",small);
             GUI.enabled=ready&&(practice||network!=null&&network.Connected&&remoteReady);
@@ -435,8 +439,8 @@ namespace PaperTrails
         }
         void PortraitLobby(float x,float w)
         {
-            float inner=w-20,bottom=880;
-            lobbyScroll=GUI.BeginScrollView(new Rect(x,130,w,uiHeight-150),lobbyScroll,new Rect(0,0,inner,1060));
+            float inner=w-20;int voteRows=(ArenaCount+1)/2;float bottom=350+voteRows*104+16;
+            lobbyScroll=GUI.BeginScrollView(new Rect(x,130,w,uiHeight-150),lobbyScroll,new Rect(0,0,inner,bottom+170));
             GUI.Label(new Rect(0,0,inner,36),practice?"Practice lobby":hosting?"Host lobby":"Join lobby",heading);
             GUI.Label(new Rect(0,42,inner,42),status!=""?status:practice?"Second slot: CPU":hosting?SessionAddress()+" / "+network?.Status:network?.Status,small);
             GUI.contentColor=GameView.Red;if(Btn(new Rect(0,92,inner/2-5,48),team==Team.Red?"Red ✓":"Red")){team=Team.Red;ready=false;SendLobby();}
@@ -446,7 +450,7 @@ namespace PaperTrails
             GUI.Label(new Rect(0,272,inner,30),"Match: "+(duration/60).ToString("0")+" minutes",small);
             if(hosting){duration=GUI.HorizontalSlider(new Rect(150,282,inner-150,20),duration,60,600);duration=Mathf.Round(duration/60)*60;}
             GUI.Label(new Rect(0,310,inner,30),"Your arena vote",label);
-            for(int i=0;i<10;i++)
+            for(int i=0;i<ArenaCount;i++)
             {
                 Rect r=new Rect(i%2*inner/2,350+i/2*104,inner/2-8,96);Fill(r,vote==i?new Color(.18f,.4f,.34f):new Color(.12f,.16f,.19f));GUI.DrawTexture(new Rect(r.x+5,r.y+3,r.width-10,62),previews[i],ScaleMode.ScaleToFit);
                 if(GUI.Button(r,GUIContent.none,GUIStyle.none)&&Time.unscaledTime>suppressClickUntil){vote=i;ready=false;SendLobby();}GUI.Label(new Rect(r.x+4,r.y+64,r.width-8,30),ArenaName(i),small);
@@ -511,7 +515,7 @@ namespace PaperTrails
             if(reconnecting){Fill(new Rect(uiWidth/2-190,uiHeight/2-120,380,160),new Color(.05f,.07f,.09f,.93f));GUI.Label(new Rect(uiWidth/2-180,uiHeight/2-105,360,50),"Reconnecting…",centered);if(Btn(new Rect(uiWidth/2-140,uiHeight/2-40,280,50),"Back to lobby")){reconnecting=false;network?.Dispose();network=null;screen=ScreenMode.Menu;status="Disconnected.";}}
         }
         float Percent(int count)=>100f*count/game.Arena.Claimable;
-        static string ArenaName(int id)=>id==4?"Crescent Moon":((ArenaKind)id).ToString();
+        static string ArenaName(int id)=>id>=0&&id<ArenaNames.Length?ArenaNames[id]:((ArenaKind)id).ToString();
         bool Btn(Rect r,string text)=>GUI.Button(r,text,button)&&Time.unscaledTime>suppressClickUntil;
         IGameSession NewSession()=>online?(IGameSession)new RelaySession():new LanSession();
         string SessionAddress()=>online?"Code "+network?.JoinCode:LocalAddress();

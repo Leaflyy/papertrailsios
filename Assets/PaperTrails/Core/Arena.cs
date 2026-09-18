@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace PaperTrails.Core
 {
     public enum Team : byte { Neutral, Red, Blue, Blocked }
-    public enum ArenaKind { Star, USA, Donut, Cross, CrescentMoon, Skull, Hourglass, Butterfly, Heart, Spiral }
+    public enum ArenaKind { Star, USA, Donut, Cross, CrescentMoon, Skull, Hourglass, Butterfly, Heart, Spiral, Diamond, LightningBolt, Mustache, Flare, Cash, Tilda, Triangle, Circle, Square, Parallelogram, CoolS, CubicCurve }
 
     public sealed class Arena
     {
@@ -55,13 +55,37 @@ namespace PaperTrails.Core
             {
                 Hubs[1]=Farthest(Hubs[0],candidates);Hubs[0]=Farthest(Hubs[1],candidates);
             }
-            // Simulated bot-vs-bot fairness (8 seeds x both colors, 120s matches,
-            // coordinate descent over hub pairs): only CrescentMoon beat its
-            // computed pair (46.6 -> 49.9 avg Red share). Every other map stayed
-            // within noise of its computed hubs, so they keep them.
-            if(Kind==ArenaKind.CrescentMoon){Hubs[0]=5882;Hubs[1]=854;}
+            // Simulated bot-vs-bot fairness (coordinate descent over hub pairs,
+            // 8 seeds x both colors): only the listed maps beat their computed
+            // pair. Everything else stays within noise, so it keeps computed hubs.
+            var fair = FairHubs[(int)Kind];
+            if (fair != null) { Hubs[0] = fair[0]; Hubs[1] = fair[1]; }
         }
 
+        static readonly int[][] FairHubs = {
+            null, // Star
+            null, // USA
+            null, // Donut
+            null, // Cross
+            new[]{5882, 854}, // CrescentMoon (42,73)-(54,10)
+            null, // Skull
+            null, // Hourglass
+            null, // Butterfly
+            null, // Heart
+            null, // Spiral
+            new[]{3349, 999}, // Diamond (69,41)-(39,12)
+            new[]{5158, 1235}, // LightningBolt (38,64)-(35,15)
+            null, // Mustache
+            new[]{4840, 1397}, // Flare (40,60)-(37,17)
+            null, // Cash
+            null, // Tilda
+            null, // Triangle
+            null, // Circle
+            null, // Square
+            new[]{4862, 1457}, // Parallelogram (62,60)-(17,18)
+            null, // CoolS
+            new[]{4627, 1771}, // CubicCurve (67,57)-(11,22)
+        };
         int Farthest(int a, List<int> candidates)
         {
             int best = candidates[0], distance = -1;
@@ -163,6 +187,9 @@ namespace PaperTrails.Core
         }
 
         static readonly float[] USA = { -1,.7f, -.6f,.62f, -.25f,.66f, .12f,.57f, .35f,.68f, .55f,.5f, .8f,.73f, 1,.65f, .8f,.2f, .65f,.05f, .6f,-.55f, .48f,-.48f, .38f,-.15f, 0,-.22f, -.28f,-.55f, -.4f,-.32f, -.66f,-.3f, -.88f,.05f };
+        static readonly float[] Bolt = { .05f,1f, -.5f,.1f, -.12f,.1f, -.3f,-1f, .5f,-.1f, .12f,-.1f };
+        static readonly float[] CoolTipA = { -.42f,.54f, -.08f,.54f, -.25f,.8f };
+        static readonly float[] CoolTipB = { .42f,-.54f, .08f,-.54f, .25f,-.8f };
         static readonly float[] Star = MakeStar();
         static float[] MakeStar()
         {
@@ -188,6 +215,18 @@ namespace PaperTrails.Core
                 case ArenaKind.Spiral:
                     for (int i=0;i<220;i++) { double t=i/219.0*Math.PI*3.4; double radius=.12+.064*t; double dx=x-Math.Cos(t)*radius, dy=y-Math.Sin(t)*radius; if(dx*dx+dy*dy<.0144) return true; }
                     return false;
+                case ArenaKind.Diamond: return Math.Abs(x)+Math.Abs(y) < .95f;
+                case ArenaKind.LightningBolt: return Polygon(x,y,Bolt);
+                case ArenaKind.Mustache: return (x-.34f)*(x-.34f)/.09f+y*y/.0576f < 1 || (x+.34f)*(x+.34f)/.09f+y*y/.0576f < 1 || (Math.Abs(x) < .4f && Math.Abs(y) < .13f);
+                case ArenaKind.Flare: return x*x+(y+.28f)*(y+.28f) < .2025f || (y > -.1f && y < .85f && Math.Abs(x) < (.85f-y)*.421f);
+                case ArenaKind.Cash: return (Math.Abs(x) < .09f && Math.Abs(y) < .82f) || (Math.Abs(y-.6f) < .14f && Math.Abs(x) < .48f) || (Math.Abs(x+.28f) < .2f && y > .08f && y < .54f) || (Math.Abs(y) < .15f && Math.Abs(x) < .48f) || (Math.Abs(x-.28f) < .2f && y > -.54f && y < -.08f) || (Math.Abs(y+.6f) < .14f && Math.Abs(x) < .48f);
+                case ArenaKind.Tilda: return Math.Abs(x) < .92f && Math.Abs(y-.3f*Math.Sin(2.5f*x)) < .2f;
+                case ArenaKind.Triangle: return y >= -.6f && y <= .9f && Math.Abs(x) <= (.9f-y)*.533f;
+                case ArenaKind.Circle: return x*x+y*y < .9025f;
+                case ArenaKind.Square: return Math.Abs(x) < .8f && Math.Abs(y) < .8f;
+                case ArenaKind.Parallelogram: return Math.Abs(x-.3f*y) < .55f && Math.Abs(y) < .72f;
+                case ArenaKind.CoolS: return (Math.Abs(y-.6f) < .12f && Math.Abs(x) < .44f) || (Math.Abs(x+.25f) < .17f && y > .08f && y < .54f) || (Math.Abs(y) < .12f && Math.Abs(x) < .44f) || (Math.Abs(x-.25f) < .17f && y > -.54f && y < -.08f) || (Math.Abs(y+.6f) < .12f && Math.Abs(x) < .44f) || Polygon(x,y,CoolTipA) || Polygon(x,y,CoolTipB);
+                case ArenaKind.CubicCurve: return (Math.Abs(x) < .9f && Math.Abs(y-.4f*Math.Sin(2.2f*x)) < .16f) || ((x+.45f)*(x+.45f)+y*y < .1024f);
                 default: return false;
             }
         }
