@@ -42,10 +42,12 @@ namespace PaperTrails.Core
         readonly bool[] visited;
         readonly int[] queue, parent;
         float coinTimer;
-
-        public GameSimulation(ArenaKind arena, Team first, Team second, int seed = 12345, float duration = 300)
+        public GameSimulation(ArenaKind arena, Team first, Team second, int seed = 12345, float duration = 300, int hub0 = -1, int hub1 = -1)
         {
-            Arena = new Arena(arena); Owners = new Team[Arena.Mask.Length];
+            Arena = new Arena(arena);
+            if(hub0>=0)Arena.Hubs[0]=hub0;
+            if(hub1>=0)Arena.Hubs[1]=hub1;
+            Owners = new Team[Arena.Mask.Length];
             visited = new bool[Owners.Length]; queue = new int[Owners.Length]; parent = new int[Owners.Length];
             Remaining = duration; random = new Random(seed);
             for (int i = 0; i < Owners.Length; i++)

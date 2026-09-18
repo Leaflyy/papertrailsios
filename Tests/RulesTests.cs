@@ -23,6 +23,12 @@ static class RulesTests
         {
             var a=new Arena(kind);Check(a.Claimable>300,kind+" claimable area");Check(a.Mask[a.Hubs[0]]&&a.Mask[a.Hubs[1]],kind+" hubs");Check(Arena.DistanceSquared(a.Hubs[0],a.Hubs[1])>100,kind+" distinct hubs");
         }
+        {
+            var a=new Arena(ArenaKind.CrescentMoon);Check(a.Hubs[0]==5882&&a.Hubs[1]==854,"crescent uses measured hubs");
+            var g=new GameSimulation(ArenaKind.CrescentMoon,Team.Red,Team.Blue,9,300);g.Players[0].Connected=false;
+            for(int i=0;i<1500;i++)g.Step(GameSimulation.Tick);
+            double red=100.0*g.RedCount/g.Arena.Claimable;Check(red>25&&red<75,"crescent hubs stay roughly fair");
+        }
         foreach(Team a in new[]{Team.Red,Team.Blue})foreach(Team b in new[]{Team.Red,Team.Blue})
         {var g=new GameSimulation(ArenaKind.Cross,a,b);Check(g.Players.Count(p=>p.Team==Team.Red)==5&&g.Players.Count(p=>p.Team==Team.Blue)==5,"5v5 "+a+"/"+b);}
         {var g=new GameSimulation(ArenaKind.Cross,Team.Red,Team.Blue);Check(g.Players.Where(p=>p.Team==Team.Red).Select(p=>p.Cell).Distinct().Count()>1&&g.Players.Where(p=>p.Team==Team.Blue).Select(p=>p.Cell).Distinct().Count()>1,"spawn scatters teammates around hubs");}

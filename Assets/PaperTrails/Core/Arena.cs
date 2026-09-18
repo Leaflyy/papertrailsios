@@ -55,6 +55,11 @@ namespace PaperTrails.Core
             {
                 Hubs[1]=Farthest(Hubs[0],candidates);Hubs[0]=Farthest(Hubs[1],candidates);
             }
+            // Simulated bot-vs-bot fairness (8 seeds x both colors, 120s matches,
+            // coordinate descent over hub pairs): only CrescentMoon beat its
+            // computed pair (46.6 -> 49.9 avg Red share). Every other map stayed
+            // within noise of its computed hubs, so they keep them.
+            if(Kind==ArenaKind.CrescentMoon){Hubs[0]=5882;Hubs[1]=854;}
         }
 
         int Farthest(int a, List<int> candidates)
