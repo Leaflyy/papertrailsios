@@ -149,6 +149,17 @@ static class RulesTests
             var back=JsonSerializer.Deserialize<Packet>(joined,new JsonSerializerOptions{IncludeFields=true});
             Check(back!=null&&back.matchId==snap.matchId&&back.players[0].coins==snap.players[0].coins,"chunked snapshot round trip preserves state");
         }
+        {
+            Check(JoinLink.RelayLink("ab12cd")=="papertrails://join?code=AB12CD","relay link format");
+            Check(JoinLink.LanLink("192.168.1.10")=="papertrails://join?ip=192.168.1.10","lan link format");
+            Check(JoinLink.TryParse("papertrails://join?code=ab12cd",out bool o1,out string t1)&&o1&&t1=="AB12CD","relay link parses and uppercases");
+            Check(JoinLink.TryParse("papertrails://join?ip=192.168.1.10",out bool o2,out string t2)&&!o2&&t2=="192.168.1.10","lan link parses");
+            Check(!JoinLink.TryParse("https://example.com/join?code=AB12CD",out _,out _),"wrong scheme rejected");
+            Check(!JoinLink.TryParse("papertrails://join",out _,out _),"missing query rejected");
+            Check(!JoinLink.TryParse("papertrails://join?code=AB!CD",out _,out _),"bad code rejected");
+            Check(!JoinLink.TryParse("papertrails://join?ip=999.1.1.1",out _,out _),"bad ip rejected");
+            Check(!JoinLink.TryParse(null,out _,out _),"null link rejected");
+        }
         Console.WriteLine($"{checks} checks passed.");
     }
 }

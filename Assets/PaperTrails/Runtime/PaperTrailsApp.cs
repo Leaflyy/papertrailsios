@@ -19,15 +19,15 @@ namespace PaperTrails
         IGameSession network;
         bool online=true;
         string joinCode="";
-        bool hosting,practice,remoteReady,ready,wasConnected,banked,authorized,smokeHost,codeWritten,recoveryCopied;
+        bool hosting,practice,remoteReady,ready,wasConnected,banked,authorized,smokeHost,codeWritten,recoveryCopied,reconnecting,lastOnline=true;
         int snapshots;
         Team team=Team.Red,remoteTeam=Team.Blue;
         int skin,remoteSkin,vote,remoteVote,wallet,localId,selectedArena,sendSeq;
         readonly SnapshotChunks.Assembler snapshotAsm=new SnapshotChunks.Assembler();
-        float accumulator,sendTimer,finishSend,rouletteStart,nextClick,duration=300,unlockTime=-10,nextHeartbeat;
+        float accumulator,sendTimer,finishSend,rouletteStart,nextClick,duration=300,unlockTime=-10,nextHeartbeat,reconnectUntil,lastRxTime;
         int lastSecond=-1;
         int[] votes;
-        string address="192.168.1.10",status="",remoteToken="",token,reveal="",recoveryCode="",restoreCode="",playerName="Player",remoteName="Player 2";
+        string address="192.168.1.10",status="",remoteToken="",token,reveal="",recoveryCode="",restoreCode="",playerName="Player",remoteName="Player 2",lastCode="",lastAddress="",pendingLink=null;
         readonly HashSet<int> unlocked=new HashSet<int>();
         readonly List<Texture2D> previews=new List<Texture2D>();
         Vector2 touchAnchor,gestureDirection,collectionScroll,lobbyScroll,rouletteScroll;
@@ -40,7 +40,7 @@ namespace PaperTrails
         static void Boot(){if(!FindAnyObjectByType<PaperTrailsApp>())new GameObject("PaperTrails").AddComponent<PaperTrailsApp>();}
         void Awake()
         {
-            Application.targetFrameRate=60;UnityEngine.Screen.sleepTimeout=SleepTimeout.NeverSleep;
+            Application.targetFrameRate=60;Application.runInBackground=true;UnityEngine.Screen.sleepTimeout=SleepTimeout.NeverSleep;
             UnityEngine.Screen.autorotateToPortrait=true;UnityEngine.Screen.autorotateToPortraitUpsideDown=true;UnityEngine.Screen.autorotateToLandscapeLeft=true;UnityEngine.Screen.autorotateToLandscapeRight=true;
             if(Application.isMobilePlatform)UnityEngine.Screen.orientation=ScreenOrientation.AutoRotation;
             view=gameObject.AddComponent<GameView>();sound=gameObject.AddComponent<SoundBank>();studio=gameObject.AddComponent<PreviewStudio>();
@@ -64,6 +64,8 @@ namespace PaperTrails
             if(Array.IndexOf(args,"-paperRelayHostSmoke")>=0){online=true;StartLobby(true,false);ready=true;smokeHost=true;Invoke(nameof(NetworkSmokeExit),55);}
             int relayJoin=Array.IndexOf(args,"-paperRelayClientSmoke");
             if(relayJoin>=0&&relayJoin+1<args.Length){online=true;joinCode=args[relayJoin+1];StartLobby(false,false);ready=true;Invoke(nameof(NetworkSmokeExit),30);}
+            Application.deepLinkActivated+=OnDeepLink;
+            if(!string.IsNullOrEmpty(Application.absoluteURL))pendingLink=Application.absoluteURL;
         }
         System.Collections.IEnumerator SmokeRoutine()
         {
@@ -100,6 +102,9 @@ namespace PaperTrails
         void NetworkSmokeExit(){bool success=screen==ScreenMode.Match&&(hosting?!string.IsNullOrEmpty(remoteToken):snapshots>20);Debug.Log("PAPERTRAILS_NETWORK_"+(success?"OK":"FAILED")+" snapshots="+snapshots+" host="+hosting);Application.Quit(success?0:1);}
         void Update()
         {
+            if(screen==ScreenMode.Menu&&!string.IsNullOrEmpty(pendingLink)){string url=pendingLink;pendingLink=null;HandleLink(url);}
+            if(reconnecting&&Time.unscaledTime>=reconnectUntil){reconnecting=false;network?.Dispose();network=null;if(screen==ScreenMode.Match)screen=ScreenMode.Lobby;status="Could not reconnect. Rejoin with the code or link.";}
+            if(!hosting&&screen==ScreenMode.Match&&!reconnecting&&network!=null&&network.Connected&&Time.unscaledTime-lastRxTime>5f){Bank();BeginReconnect();}
             PollNetwork();
             if(screen!=ScreenMode.Match&&Input.touchCount>0)
             {
@@ -185,11 +190,11 @@ namespace PaperTrails
             if(network==null)return;
             if(network.Connected&&Time.unscaledTime>=nextHeartbeat){nextHeartbeat=Time.unscaledTime+1;Send(new Packet{type="ping"});}
             if(network.Connected&&!wasConnected)
-            {authorized=false;if(!hosting)Send(new Packet{type="hello",token=token,name=playerName,team=(int)team,skin=skin,vote=vote,ready=ready});}
+            {authorized=false;lastRxTime=Time.unscaledTime;if(!hosting)Send(new Packet{type="hello",token=token,name=playerName,team=(int)team,skin=skin,vote=vote,ready=ready});}
             if(!network.Connected&&wasConnected)
             {
                 remoteReady=false;authorized=false;
-                if(!hosting){Bank();screen=ScreenMode.Lobby;status="Host disconnected. Rejoin to resume if the host is still running.";}
+                if(!hosting){Bank();BeginReconnect();}
             }
             wasConnected=network.Connected;
             int budget=32;
@@ -199,7 +204,7 @@ namespace PaperTrails
                 {
                     string encoded=raw;
                     if(encoded.StartsWith("CH|")){if(!snapshotAsm.Push(encoded,out encoded))continue;}
-                    Packet p=JsonUtility.FromJson<Packet>(PacketCodec.Decode(encoded));if(p==null)continue;
+                    Packet p=JsonUtility.FromJson<Packet>(PacketCodec.Decode(encoded));if(p==null)continue;lastRxTime=Time.unscaledTime;
                     if(hosting)
                     {
                         if(p.type=="hello")
@@ -217,8 +222,8 @@ namespace PaperTrails
                     }
                     else
                     {
-                        if(p.type=="lobby") {if(screen==ScreenMode.Match)Bank();remoteName=NormalizeName(p.name,"Player");remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=p.skin;remoteVote=p.vote;remoteReady=p.ready;duration=p.duration;if(screen!=ScreenMode.Lobby)screen=ScreenMode.Lobby;}
-                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==10){if(screen==ScreenMode.Match)Bank();votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;screen=ScreenMode.Roulette;}
+                        if(p.type=="lobby") {reconnecting=false;if(screen==ScreenMode.Match)Bank();remoteName=NormalizeName(p.name,"Player");remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=p.skin;remoteVote=p.vote;remoteReady=p.ready;duration=p.duration;if(screen!=ScreenMode.Lobby)screen=ScreenMode.Lobby;}
+                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==10){reconnecting=false;if(screen==ScreenMode.Match)Bank();votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;screen=ScreenMode.Roulette;}
                         if(p.type=="state")ApplySnapshot(p);
                         if(p.type=="error")status=p.message;
                     }
@@ -230,7 +235,7 @@ namespace PaperTrails
         {
             if(p.players==null||p.players.Length!=10||p.arena<0||p.arena>9)return;
             byte[] bytes=Convert.FromBase64String(p.owners);if(bytes.Length!=Arena.Size*Arena.Size)return;
-            snapshots++;
+            snapshots++;reconnecting=false;lastRxTime=Time.unscaledTime;
             bool fresh=screen!=ScreenMode.Match&&screen!=ScreenMode.Results || (int)game.Arena.Kind!=p.arena;
             if(fresh){if(game!=null)Bank();game=new GameSimulation((ArenaKind)p.arena,(Team)p.players[0].team,(Team)p.players[1].team);banked=false;}
             game.MatchId=p.matchId;
@@ -250,9 +255,39 @@ namespace PaperTrails
             if(fresh)view.Bind(game,1);screen=game.Phase==MatchPhase.Finished?ScreenMode.Results:ScreenMode.Match;if(screen==ScreenMode.Results)Bank();
         }
         void SendLobby(){Send(new Packet{type="lobby",name=playerName,team=(int)team,skin=skin,vote=vote,ready=ready,duration=duration});}
+        void BeginReconnect()
+        {
+            if(reconnecting)return;
+            reconnecting=true;reconnectUntil=Time.unscaledTime+8f;
+            status="Connection lost. Reconnecting…";
+            try
+            {
+                network?.Dispose();network=NewSession();
+                if(lastOnline)network.Join(lastCode);else network.Join(lastAddress);
+            }
+            catch(Exception){ }
+            wasConnected=false;
+        }
+        void OnDeepLink(string url){pendingLink=url;}
+        void HandleLink(string url)
+        {
+            if(!JoinLink.TryParse(url,out bool linkOnline,out string target)){status="That join link did not work. Ask the host for a fresh one.";return;}
+            online=linkOnline;
+            if(online)joinCode=target;else address=target;
+            StartLobby(false,false);
+        }
+        void ShareJoinLink()
+        {
+            string link=null;
+            if(online){string code=network!=null?network.JoinCode:"";if(!string.IsNullOrEmpty(code))link=JoinLink.RelayLink(code);}
+            else link=JoinLink.LanLink(LocalAddress());
+            if(string.IsNullOrEmpty(link)){status="Still starting the host connection. Try again in a moment.";return;}
+            GUIUtility.systemCopyBuffer=link;status="Join link copied. Send it to your partner.";
+        }
         void StartLobby(bool host,bool offline)
         {
-            network?.Dispose();network=null;wasConnected=false;hosting=host;practice=offline;localId=host?0:1;ready=false;remoteReady=false;remoteToken="";remoteName=offline?"CPU 1":host?"Player 2":"Player";status="";screen=ScreenMode.Lobby;
+            network?.Dispose();network=null;wasConnected=false;hosting=host;practice=offline;localId=host?0:1;ready=false;remoteReady=false;remoteToken="";remoteName=offline?"CPU 1":host?"Player 2":"Player";status="";screen=ScreenMode.Lobby;reconnecting=false;
+            if(!host){lastOnline=online;lastCode=joinCode;lastAddress=address;}
             if(offline){remoteReady=true;return;}
             network=NewSession();try{if(host)network.Host();else network.Join(online?joinCode:address);}catch(Exception e){status=e.Message;}
         }
@@ -318,7 +353,7 @@ namespace PaperTrails
         }
         void ReturnLobby(){Bank();ready=false;remoteReady=practice;screen=ScreenMode.Lobby;if(hosting)SendLobby();}
         void OnDestroy(){network?.Dispose();}
-        void OnApplicationPause(bool paused){if(paused)Save();}
+        void OnApplicationPause(bool paused){if(!paused)return;if(screen==ScreenMode.Match||screen==ScreenMode.Results)Bank();Save();}
 
         void Styles()
         {
@@ -395,6 +430,7 @@ namespace PaperTrails
             GUI.enabled=ready&&(practice||network!=null&&network.Connected&&remoteReady);
             if(hosting&&Btn(new Rect(x+w*.68f,606,w*.32f,50),"Start match"))Roulette();GUI.enabled=true;
             if(Btn(new Rect(x,680,160,42),"Back")){network?.Dispose();network=null;screen=ScreenMode.Menu;}
+            if(hosting&&!practice&&Btn(new Rect(x+180,680,210,42),"Share join link"))ShareJoinLink();
             if(!hosting&&network!=null&&!network.Connected&&Btn(new Rect(x+180,680,170,42),"Reconnect")){network.Dispose();network=NewSession();network.Join(online?joinCode:address);wasConnected=false;}
         }
         void PortraitLobby(float x,float w)
@@ -419,6 +455,7 @@ namespace PaperTrails
             GUI.Label(new Rect(inner*.5f,bottom+5,inner*.5f,44),remoteReady?"Partner ready":"Partner not ready",small);
             GUI.enabled=ready&&(practice||network!=null&&network.Connected&&remoteReady);if(hosting&&Btn(new Rect(0,bottom+60,inner,48),"Start match"))Roulette();GUI.enabled=true;
             if(Btn(new Rect(0,bottom+120,inner*.46f,44),"Back")){network?.Dispose();network=null;screen=ScreenMode.Menu;}
+            if(hosting&&!practice&&Btn(new Rect(inner*.5f,bottom+120,inner*.5f,44),"Share join link"))ShareJoinLink();
             if(!hosting&&network!=null&&!network.Connected&&Btn(new Rect(inner*.5f,bottom+120,inner*.5f,44),"Reconnect")){network.Dispose();network=NewSession();network.Join(online?joinCode:address);wasConnected=false;}
             GUI.EndScrollView();
         }
@@ -471,6 +508,7 @@ namespace PaperTrails
             }
             for(int t=0;t<2;t++){int h=game.Arena.Hubs[t];GUI.Label(new Rect(map.x+(h%Arena.Size)/80f*size-5,map.yMax-(h/Arena.Size)/80f*size-10,20,20),"H",small);}
             Player me=game.Players[localId];if(!me.Alive){Fill(new Rect(uiWidth/2-170,uiHeight/2-50,340,100),new Color(.05f,.07f,.09f,.93f));GUI.Label(new Rect(uiWidth/2-160,uiHeight/2-25,320,60),$"Respawning  {me.Respawn:0.0}",centered);}
+            if(reconnecting){Fill(new Rect(uiWidth/2-190,uiHeight/2-120,380,160),new Color(.05f,.07f,.09f,.93f));GUI.Label(new Rect(uiWidth/2-180,uiHeight/2-105,360,50),"Reconnecting…",centered);if(Btn(new Rect(uiWidth/2-140,uiHeight/2-40,280,50),"Back to lobby")){reconnecting=false;network?.Dispose();network=null;screen=ScreenMode.Menu;status="Disconnected.";}}
         }
         float Percent(int count)=>100f*count/game.Arena.Claimable;
         static string ArenaName(int id)=>id==4?"Crescent Moon":((ArenaKind)id).ToString();

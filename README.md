@@ -29,6 +29,11 @@ other. Both devices must be on the same reachable LAN. TCP port 27851 is used.
 The menu displays one detected address; PCs with VPN/virtual interfaces may
 need the physical Wi-Fi adapter's address instead.
 
+To invite someone, tap **Share join link** in the host lobby and send them the
+copied text. Tapping a `papertrails://join` link opens the app and joins that
+lobby directly. If a joiner loses connection mid-match, the game banks their
+coins and spends a few seconds reconnecting before falling back to the lobby.
+
 ## Unity
 
 Open this folder as a project with Unity **6000.5.6f1**. Open

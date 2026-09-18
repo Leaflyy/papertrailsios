@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Merged with Unity's manifest: adds the papertrails:// join-link scheme
+     to the Unity player activity. android:exported comes from the base. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <activity android:name="com.unity3d.player.UnityPlayerActivity">
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="papertrails" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>

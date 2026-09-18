@@ -22,6 +22,7 @@ namespace PaperTrails.Editor
     {
         const string Key="NSLocalNetworkUsageDescription";
         const string Value="PaperTrails uses the local network to host and join LAN matches with nearby devices. Online Relay play does not need this.";
+        const string UrlBlock="\t<key>CFBundleURLTypes</key>\n\t<array>\n\t\t<dict>\n\t\t\t<key>CFBundleURLSchemes</key>\n\t\t\t<array>\n\t\t\t\t<string>papertrails</string>\n\t\t\t</array>\n\t\t</dict>\n\t</array>\n";
         [PostProcessBuild(100)]
         public static void OnPostProcess(BuildTarget target,string path)
         {
@@ -36,6 +37,12 @@ namespace PaperTrails.Editor
                 string escaped=Value.Replace("&","&amp;").Replace("<","&lt;").Replace(">","&gt;");
                 string updated=Upsert(text,escaped);
                 if(updated==null){Debug.LogWarning("PAPERTRAILS_PLIST no root dict, left untouched");return;}
+                if(updated.IndexOf("<key>CFBundleURLTypes</key>")<0)
+                {
+                    int close=updated.LastIndexOf("</dict>");
+                    if(close<0){Debug.LogWarning("PAPERTRAILS_PLIST no root dict, left untouched");return;}
+                    updated=updated.Substring(0,close)+UrlBlock+updated.Substring(close);
+                }
                 try{var check=new XmlDocument{XmlResolver=null};check.LoadXml(updated);}
                 catch(System.Exception e){Debug.LogWarning("PAPERTRAILS_PLIST verification failed, left untouched: "+e.Message);return;}
                 byte[] body=Encoding.UTF8.GetBytes(updated);
@@ -50,7 +57,7 @@ namespace PaperTrails.Editor
         static string Upsert(string text,string escapedValue)
         {
             var existing=new Regex("<key>"+Key+"</key>\\s*<string>.*?</string>",RegexOptions.Singleline);
-            if(existing.IsMatch(text))return existing.Replace(text,"<key>"+Key+"</key><string>"+escapedValue+"</string>",1);
+            if(existing.IsMatch(text))return existing.Replace(text,"<key>"+Key+"</key>\n\t<string>"+escapedValue+"</string>",1);
             int close=text.LastIndexOf("</dict>");
             if(close<0)return null;
             return text.Substring(0,close)+"\t<key>"+Key+"</key>\n\t<string>"+escapedValue+"</string>\n"+text.Substring(close);
