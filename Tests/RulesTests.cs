@@ -29,6 +29,10 @@ static class RulesTests
             for(int i=0;i<1500;i++)g.Step(GameSimulation.Tick);
             double red=100.0*g.RedCount/g.Arena.Claimable;Check(red>25&&red<75,"crescent hubs stay roughly fair");
         }
+        {
+            foreach(ArenaKind kind in Enum.GetValues(typeof(ArenaKind)))
+            {var a=new Arena(kind);Check(a.IsSpawnable(a.Hubs[0])&&a.IsSpawnable(a.Hubs[1]),kind+" spawns are playable");}
+        }
         foreach(Team a in new[]{Team.Red,Team.Blue})foreach(Team b in new[]{Team.Red,Team.Blue})
         {var g=new GameSimulation(ArenaKind.Cross,a,b);Check(g.Players.Count(p=>p.Team==Team.Red)==5&&g.Players.Count(p=>p.Team==Team.Blue)==5,"5v5 "+a+"/"+b);}
         {var g=new GameSimulation(ArenaKind.Cross,Team.Red,Team.Blue);Check(g.Players.Where(p=>p.Team==Team.Red).Select(p=>p.Cell).Distinct().Count()>1&&g.Players.Where(p=>p.Team==Team.Blue).Select(p=>p.Cell).Distinct().Count()>1,"spawn scatters teammates around hubs");}
