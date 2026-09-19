@@ -34,8 +34,9 @@ namespace PaperTrails
         readonly List<Texture2D> previews=new List<Texture2D>();
         Vector2 touchAnchor,gestureDirection,collectionScroll,lobbyScroll,rouletteScroll,voteScroll;
         bool touchActive;
-        GUIStyle title,label,small,button,heading;
+        GUIStyle title,label,small,button,heading,btnRed,btnGreen,btnBlue,btnGray,btnOff,chip,billboard,sliderBack,sliderKnob,panelS,cardS,chipS;
         float uiWidth,uiHeight,uiScale=1,suppressClickUntil;
+        float countdownEnd=-10;int lastCount;bool rouletteLocked;
         const int Cost=20;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -60,7 +61,7 @@ namespace PaperTrails
             }
             game=new GameSimulation(ArenaKind.Star,Team.Red,Team.Blue);view.Bind(game,0);
             var args=Environment.GetCommandLineArgs();
-            if(Array.IndexOf(args,"-paperSmoke")>=0){practice=true;hosting=true;StartMatch((int)ArenaKind.Donut);game.Players[0].Connected=false;StartCoroutine(SmokeRoutine());}
+            if(Array.IndexOf(args,"-paperSmoke")>=0){practice=true;hosting=true;StartMatch((int)ArenaKind.Donut);countdownEnd=-10;lastCount=0;game.Players[0].Connected=false;StartCoroutine(SmokeRoutine());}
             if(Array.IndexOf(args,"-paperHostSmoke")>=0){online=false;StartLobby(true,false);ready=true;smokeHost=true;Invoke(nameof(NetworkSmokeExit),25);}
             if(Array.IndexOf(args,"-paperClientSmoke")>=0){online=false;address="127.0.0.1";StartLobby(false,false);ready=true;Invoke(nameof(NetworkSmokeExit),21);}
             if(Array.IndexOf(args,"-paperRelayHostSmoke")>=0){online=true;StartLobby(true,false);ready=true;smokeHost=true;Invoke(nameof(NetworkSmokeExit),55);}
@@ -73,7 +74,7 @@ namespace PaperTrails
         {
             string path=System.IO.Path.GetFullPath(System.IO.Path.Combine(Application.dataPath,"../../Screenshots",UnityEngine.Screen.width+"x"+UnityEngine.Screen.height));System.IO.Directory.CreateDirectory(path);
             yield return new WaitForSeconds(8);yield return CaptureFrame(System.IO.Path.Combine(path,"match.png"));
-            StartMatch((int)ArenaKind.Cross);
+            StartMatch((int)ArenaKind.Cross);countdownEnd=-10;lastCount=0;
             for(int i=0;i<game.Owners.Length;i++)
                 if(game.Arena.Mask[i]&&!game.Arena.Protected(i,Team.Blue))game.Owners[i]=i%Arena.Size<40?Team.Red:Team.Neutral;
             foreach(Player player in game.Players){player.Alive=false;player.Respawn=999;}
@@ -114,9 +115,7 @@ namespace PaperTrails
                 if(touch.phase==TouchPhase.Moved&&Mathf.Abs(touch.deltaPosition.y)>3)
                 {
                     float delta=touch.deltaPosition.y/uiScale;suppressClickUntil=Time.unscaledTime+.15f;
-                    if(screen==ScreenMode.Lobby){if(uiWidth<640)lobbyScroll.y=Mathf.Max(0,lobbyScroll.y+delta);else voteScroll.y=Mathf.Max(0,voteScroll.y+delta);}
                     if(screen==ScreenMode.Collection)collectionScroll.y=Mathf.Max(0,collectionScroll.y+delta);
-                    if(screen==ScreenMode.Roulette)rouletteScroll.y=Mathf.Max(0,rouletteScroll.y+delta);
                 }
             }
             if(smokeHost&&online&&!codeWritten&&network!=null&&!string.IsNullOrEmpty(network.JoinCode))
@@ -124,8 +123,10 @@ namespace PaperTrails
             if(smokeHost&&screen==ScreenMode.Lobby&&authorized&&remoteReady)Roulette();
             if(screen==ScreenMode.Roulette)
             {
-                if(Time.time>=nextClick){sound.Play("roulette");nextClick=Time.time+Mathf.Lerp(.055f,.5f,(Time.time-rouletteStart)/4);}
-                if(hosting && Time.time-rouletteStart>=4.5f)StartMatch(selectedArena);
+                float rt=Time.time-rouletteStart;
+                if(rt<3&&Time.time>=nextClick){sound.Play("roulette");nextClick=Time.time+Mathf.Lerp(.055f,.5f,rt/3);}
+                if(!rouletteLocked&&rt>=3){rouletteLocked=true;sound.Play("tick");}
+                if(hosting && rt>=5f)StartMatch(selectedArena);
             }
             if(screen!=ScreenMode.Match)
             {
@@ -135,12 +136,16 @@ namespace PaperTrails
                 return;
             }
             int seconds=Mathf.CeilToInt(game.Remaining);if(seconds!=lastSecond){lastSecond=seconds;if(seconds<=10&&seconds>0)sound.Play("tick");}
-            InputDirection();
+            float remain=countdownEnd-Time.unscaledTime;
+            if(remain>0){int n=Mathf.CeilToInt(remain);if(n!=lastCount){lastCount=n;sound.Play("tick");}}
+            else if(lastCount>0){lastCount=0;sound.Play("go");}
+            bool frozen=remain>0;
+            if(!frozen)InputDirection();
             if(hosting)
             {
                 game.Players[1].Connected=!practice && authorized && network!=null&&network.Connected;
-                accumulator=Mathf.Min(accumulator+Time.deltaTime,.25f);
-                while(accumulator>=GameSimulation.Tick){game.Step(GameSimulation.Tick);accumulator-=GameSimulation.Tick;}
+                if(!frozen){accumulator=Mathf.Min(accumulator+Time.deltaTime,.25f);while(accumulator>=GameSimulation.Tick){game.Step(GameSimulation.Tick);accumulator-=GameSimulation.Tick;}}
+                else accumulator=0;
                 sendTimer-=Time.deltaTime;if(sendTimer<=0){sendTimer=.1f;SendUnreliable(Packet.Snapshot(game));}
             }
             if(game.Phase==MatchPhase.Finished){if(hosting&&screen==ScreenMode.Match)finishSend=2f;Bank();screen=ScreenMode.Results;}
@@ -225,7 +230,7 @@ namespace PaperTrails
                     else
                     {
                         if(p.type=="lobby") {reconnecting=false;if(screen==ScreenMode.Match)Bank();remoteName=NormalizeName(p.name,"Player");remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=p.skin;remoteVote=p.vote;remoteReady=p.ready;duration=p.duration;if(screen!=ScreenMode.Lobby)screen=ScreenMode.Lobby;}
-                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==ArenaCount){reconnecting=false;if(screen==ScreenMode.Match)Bank();votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;screen=ScreenMode.Roulette;}
+                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==ArenaCount){reconnecting=false;if(screen==ScreenMode.Match)Bank();votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;rouletteLocked=false;screen=ScreenMode.Roulette;}
                         if(p.type=="state")ApplySnapshot(p);
                         if(p.type=="error")status=p.message;
                     }
@@ -254,7 +259,7 @@ namespace PaperTrails
             for(int i=0;i<10;i++)p.players[i].Apply(game.Players[i]);
             game.Remaining=p.remaining;game.Phase=(MatchPhase)p.phase;game.Winner=(Team)p.winner;game.RedCount=p.red;game.BlueCount=p.blue;
             game.Coins[0].Clear();game.Coins[1].Clear();if(p.coins0!=null)game.Coins[0].AddRange(p.coins0);if(p.coins1!=null)game.Coins[1].AddRange(p.coins1);
-            if(fresh)view.Bind(game,1);screen=game.Phase==MatchPhase.Finished?ScreenMode.Results:ScreenMode.Match;if(screen==ScreenMode.Results)Bank();
+            if(fresh)view.Bind(game,1);bool wasMatch=screen==ScreenMode.Match;screen=game.Phase==MatchPhase.Finished?ScreenMode.Results:ScreenMode.Match;if(!wasMatch&&screen==ScreenMode.Match){countdownEnd=Time.unscaledTime+3;lastCount=4;}if(screen==ScreenMode.Results)Bank();
         }
         void SendLobby(){Send(new Packet{type="lobby",name=playerName,team=(int)team,skin=skin,vote=vote,ready=ready,duration=duration});}
         void BeginReconnect()
@@ -297,7 +302,7 @@ namespace PaperTrails
         {
             votes=new int[ArenaCount];votes[0]=vote;votes[1]=practice?UnityEngine.Random.Range(0,ArenaCount):remoteVote;
             for(int i=2;i<ArenaCount;i++)votes[i]=UnityEngine.Random.Range(0,ArenaCount);
-            selectedArena=votes[UnityEngine.Random.Range(0,ArenaCount)];rouletteStart=Time.time;nextClick=0;screen=ScreenMode.Roulette;
+            selectedArena=votes[UnityEngine.Random.Range(0,ArenaCount)];rouletteStart=Time.time;nextClick=0;rouletteLocked=false;screen=ScreenMode.Roulette;
             Send(new Packet{type="roulette",votes=votes,arena=selectedArena});
         }
         void StartMatch(int arena)
@@ -305,7 +310,7 @@ namespace PaperTrails
             game=new GameSimulation((ArenaKind)arena,team,remoteTeam,Environment.TickCount,duration);game.Players[0].Skin=skin;game.Players[1].Skin=remoteSkin;
             game.Players[0].Name=hosting?playerName:remoteName;game.Players[1].Name=hosting?(practice?"CPU 1":remoteName):playerName;
             game.Event=(key,id,amount)=>{if(id==localId||key=="finish"||key=="overtime")sound.Play(key,amount);};
-            view.Bind(game,localId);banked=false;accumulator=0;screen=ScreenMode.Match;SendUnreliable(Packet.Snapshot(game));
+            view.Bind(game,localId);banked=false;accumulator=0;countdownEnd=Time.unscaledTime+3;lastCount=4;screen=ScreenMode.Match;SendUnreliable(Packet.Snapshot(game));
         }
         void Bank()
         {
@@ -360,150 +365,250 @@ namespace PaperTrails
         void Styles()
         {
             if(label!=null)return;
-            label=new GUIStyle(GUI.skin.label){fontSize=20,wordWrap=true,normal={textColor=new Color(.92f,.95f,.97f)}};
-            small=new GUIStyle(label){fontSize=15};heading=new GUIStyle(label){fontSize=27,fontStyle=FontStyle.Bold};title=new GUIStyle(label){fontSize=48,fontStyle=FontStyle.Bold};
+            UiTheme.Ensure();
+            label=new GUIStyle(GUI.skin.label){fontSize=20,wordWrap=true,normal={textColor=UiTheme.Ink}};
+            small=new GUIStyle(label){fontSize=15,normal={textColor=UiTheme.Muted}};heading=new GUIStyle(label){fontSize=27,fontStyle=FontStyle.Bold};title=new GUIStyle(label){fontSize=48,fontStyle=FontStyle.Bold};
             button=new GUIStyle(GUI.skin.button){fontSize=19,padding=new RectOffset(12,12,8,8),border=new RectOffset(0,0,0,0)};
             button.normal.background=Solid(new Color(.16f,.2f,.22f));button.hover.background=Solid(new Color(.22f,.32f,.32f));button.active.background=Solid(new Color(.19f,.43f,.36f));
+            btnRed=UiTheme.CardButton(button,UiTheme.BtnRed);btnRed.fontSize=20;
+            btnGreen=UiTheme.CardButton(button,UiTheme.BtnGreen);btnGreen.fontSize=20;
+            btnBlue=UiTheme.CardButton(button,UiTheme.BtnBlue);btnBlue.fontSize=20;
+            btnGray=UiTheme.CardButton(button,UiTheme.BtnGray);btnGray.fontSize=19;
+            btnOff=UiTheme.CardButton(button,UiTheme.BtnDisabled);btnOff.fontSize=19;btnOff.normal.textColor=new Color(.7f,.75f,.8f);
+            panelS=new GUIStyle(GUI.skin.box){normal={background=UiTheme.Panel},padding=new RectOffset(0,0,0,0)};
+            cardS=new GUIStyle(GUI.skin.box){normal={background=UiTheme.Card},padding=new RectOffset(0,0,0,0)};
+            chipS=new GUIStyle(GUI.skin.box){normal={background=UiTheme.Chip},padding=new RectOffset(0,0,0,0)};
+            chip=new GUIStyle(label){fontSize=15,alignment=TextAnchor.MiddleCenter,normal={textColor=UiTheme.Ink}};
+            billboard=new GUIStyle(label){fontSize=110,fontStyle=FontStyle.Bold,alignment=TextAnchor.MiddleCenter,normal={textColor=Color.white}};
+            sliderBack=new GUIStyle(GUI.skin.horizontalSlider){fixedHeight=20};sliderBack.normal.background=UiTheme.SliderTrack;
+            sliderKnob=new GUIStyle(GUI.skin.horizontalSliderThumb){fixedWidth=34,fixedHeight=34};sliderKnob.normal.background=UiTheme.SliderThumb;sliderKnob.hover.background=UiTheme.SliderThumb;sliderKnob.active.background=UiTheme.SliderThumb;
             GUI.skin.textField.fontSize=20;
+        }
+        GUIStyle BtnKind(Texture2D back,bool enabled){if(!enabled)return btnOff;if(back==UiTheme.BtnRed)return btnRed;if(back==UiTheme.BtnGreen)return btnGreen;if(back==UiTheme.BtnBlue)return btnBlue;return btnGray;}
+        bool TBtn(Rect r,string text,Texture2D back){return GUI.Button(r,text,BtnKind(back,GUI.enabled))&&Time.unscaledTime>suppressClickUntil;}
+        void Card(Rect r){if(UiTheme.Card!=null)GUI.DrawTexture(r,UiTheme.Card,ScaleMode.StretchToFill);else Fill(r,new Color(.10f,.14f,.18f,.94f));}
+        void Panel(Rect r){if(UiTheme.Panel!=null)GUI.DrawTexture(r,UiTheme.Panel,ScaleMode.StretchToFill);else Fill(r,new Color(.07f,.10f,.13f,.95f));}
+        void Chip(Rect r,string text){if(UiTheme.Chip!=null)GUI.DrawTexture(r,UiTheme.Chip,ScaleMode.StretchToFill);else Fill(r,new Color(.12f,.18f,.26f,.9f));GUI.Label(r,text,chip);}
+        void DrawBackdrop(){if(UiTheme.Background!=null)GUI.DrawTexture(new Rect(0,0,uiWidth,uiHeight),UiTheme.Background,ScaleMode.ScaleAndCrop);else Fill(new Rect(0,0,uiWidth,uiHeight),new Color(.055f,.075f,.09f,.96f));}
+        float Header(float x,float w)
+        {
+            bool narrow=w<600;
+            float logoW=narrow?Mathf.Min(w*.52f,240):Mathf.Min(w*.66f,380),logoH=logoW/3f,y=8;
+            if(UiTheme.Logo!=null)GUI.DrawTexture(new Rect(x+(w-logoW)/2,y,logoW,logoH),UiTheme.Logo,ScaleMode.ScaleToFit);
+            else GUI.Label(new Rect(x,y,w,50),"PaperTrails",title);
+            y+=logoH+(narrow?4:6);float pillW=narrow?120:150,ph=narrow?28:30;
+            Chip(new Rect(x+(w/2-pillW-4),y,pillW,ph),team==Team.Red?"● RED":"○ RED");
+            Chip(new Rect(x+w/2+4,y,pillW,ph),"5V5");
+            return y+ph+(narrow?6:8);
+        }
+        float CenterShift(float top,float contentH,float bottomPad){return Mathf.Max(0,(uiHeight-bottomPad-top-contentH)/2);}
+        void ArenaGrid(float x,float y,float w,int cols,float cellH,System.Func<int,bool> highlight,System.Func<int,Color> tint,bool showVotes,int[] counts)
+        {
+            float cw=w/cols;
+            for(int i=0;i<ArenaCount;i++)
+            {
+                Rect r=new Rect(x+(i%cols)*cw,y+(i/cols)*cellH,cw-6,cellH-6);
+                Card(r);
+                if(highlight!=null&&highlight(i))Fill(r,new Color(.15f,.7f,.4f,.28f));else Fill(r,new Color(1,1,1,.04f));
+                float iconH=cellH-44;if(iconH<24)iconH=24;
+                GUI.DrawTexture(new Rect(r.x+4,r.y+3,r.width-8,iconH),previews[i],ScaleMode.ScaleToFit);
+                string name=ArenaName(i);if(showVotes&&counts!=null)name+=$"  ({counts[i]})";
+                var st=new GUIStyle(small){fontSize=w<600?10:13,alignment=TextAnchor.UpperCenter,wordWrap=true,normal={textColor=highlight!=null&&highlight(i)?Color.white:UiTheme.Ink}};
+                GUI.Label(new Rect(r.x+2,r.y+iconH+4,r.width-4,cellH-iconH-6),name,st);
+                if(GUI.Button(r,GUIContent.none,GUIStyle.none)&&Time.unscaledTime>suppressClickUntil){vote=i;ready=false;SendLobby();}
+            }
+        }
+        void ThemedMinutes(Rect r)
+        {
+            duration=Mathf.Round(GUI.HorizontalSlider(r,duration,60,600,sliderBack,sliderKnob)/60)*60;
         }
         void OnGUI()
         {
             Styles();Rect safe=UnityEngine.Screen.safeArea;float scale=Mathf.Min(safe.height/800f,safe.width/420f);uiScale=scale;uiWidth=safe.width/scale;uiHeight=safe.height/scale;
             GUI.matrix=Matrix4x4.TRS(new Vector3(safe.x,UnityEngine.Screen.height-safe.yMax,0),Quaternion.identity,new Vector3(scale,scale,1));
             if(screen==ScreenMode.Match){Hud();return;}
-            Fill(new Rect(0,0,uiWidth,uiHeight),new Color(.055f,.075f,.09f,.96f));
+            DrawBackdrop();
             float w=Mathf.Min(uiWidth-40,960),x=(uiWidth-w)/2;
-            GUI.Label(new Rect(x,25,w,65),"PaperTrails",title);
-            GUI.Label(new Rect(x,90,w,30),"RED / BLUE     •     5 V 5",small);
             switch(screen)
             {
                 case ScreenMode.Menu:
-                    if(w>=600)GUI.DrawTexture(new Rect(x+w*.55f,190,w*.4f,w*.4f),previews[0],ScaleMode.ScaleToFit);
-                    float bw=w<600?w:Mathf.Min(w*.48f,360);
-                    GUI.Label(new Rect(x,120,bw,28),"Player name",small);
-                    string typedName=GUI.TextField(new Rect(x,150,bw,42),playerName,16);if(typedName!=playerName){playerName=typedName;Save();}
-                    if(Btn(new Rect(x,210,bw/2-4,40),online?"Online ✓":"Online"))online=true;
-                    if(Btn(new Rect(x+bw/2+4,210,bw/2-4,40),online?"LAN":"LAN ✓"))online=false;
-                    if(Btn(new Rect(x,268,bw,54),"Host game"))StartLobby(true,false);
-                    GUI.Label(new Rect(x,338,bw,28),online?"Join code":"Host IP address",small);
-                    if(online)joinCode=GUI.TextField(new Rect(x,370,bw,42),joinCode).ToUpperInvariant();else address=GUI.TextField(new Rect(x,370,bw,42),address);
-                    if(Btn(new Rect(x,426,bw,54),"Join game"))StartLobby(false,false);
-                    if(Btn(new Rect(x,504,bw,54),"Practice with CPUs"))StartLobby(true,true);
-                    if(Btn(new Rect(x,580,bw,54),"Collection  /  "+wallet+" coins"))screen=ScreenMode.Collection;
+                {
+                    float y0=Header(x,w);
+                    if(w>=600)GUI.DrawTexture(new Rect(x+w*.55f,y0+40,w*.4f,w*.4f),previews[0],ScaleMode.ScaleToFit);
+                    float bw=w<600?w:Mathf.Min(w*.48f,360);bool nm=w<600;float bh=nm?48:54;
+                    y0+=CenterShift(y0,nm?410:440,60);
+                    Panel(new Rect(x-10,y0-6,bw+20,nm?110:116));
+                    GUI.Label(new Rect(x,y0,bw,26),"Player name",small);
+                    string typedName=GUI.TextField(new Rect(x,y0+28,bw,42),playerName,16);if(typedName!=playerName){playerName=typedName;Save();}
+                    if(TBtn(new Rect(x,y0+76,bw/2-4,40),online?"Online ✓":"Online",online?UiTheme.BtnBlue:UiTheme.BtnGray))online=true;
+                    if(TBtn(new Rect(x+bw/2+4,y0+76,bw/2-4,40),online?"LAN":"LAN ✓",!online?UiTheme.BtnBlue:UiTheme.BtnGray))online=false;
+                    float my=y0+(nm?116:122);
+                    if(TBtn(new Rect(x,my,bw,bh),"Host game",UiTheme.BtnGreen))StartLobby(true,false);my+=bh+8;
+                    float joinH=26+42+6+bh;
+                    Panel(new Rect(x-10,my-6,bw+20,joinH+12));
+                    GUI.Label(new Rect(x,my,bw,26),online?"Join code":"Host IP address",small);
+                    if(online)joinCode=GUI.TextField(new Rect(x,my+28,bw,42),joinCode).ToUpperInvariant();else address=GUI.TextField(new Rect(x,my+28,bw,42),address);
+                    if(TBtn(new Rect(x,my+76,bw,bh),"Join game",UiTheme.BtnBlue))StartLobby(false,false);my+=joinH+12;
+                    if(TBtn(new Rect(x,my,bw,bh),"Practice with CPUs",UiTheme.BtnRed))StartLobby(true,true);my+=bh+8;
+                    if(TBtn(new Rect(x,my,bw,bh),"Collection  /  "+wallet+" coins",UiTheme.BtnGray))screen=ScreenMode.Collection;
                     GUI.Label(new Rect(x,uiHeight-50,w,32),online?"Online multiplayer":"LAN  /  "+LocalAddress(),small);break;
+                }
                 case ScreenMode.Lobby: LobbyUI(x,w);break;
                 case ScreenMode.Roulette:
-                    GUI.Label(new Rect(x,145,w,42),"Arena roulette",heading);
-                    int index=Time.time-rouletteStart>4?Array.IndexOf(votes,selectedArena):(int)((Time.time-rouletteStart)*12)%ArenaCount;
-                    int cols=w<600?2:5;float cw=(w-20)/cols;
-                    rouletteScroll=GUI.BeginScrollView(new Rect(x,215,w,uiHeight-240),rouletteScroll,new Rect(0,0,w-20,Mathf.Ceil(ArenaCount/(float)cols)*150));
-                    for(int i=0;i<ArenaCount;i++){var r=new Rect(i%cols*cw,i/cols*150,cw-10,140);Fill(r,i==index?new Color(.2f,.55f,.48f):new Color(.13f,.17f,.2f));GUI.DrawTexture(new Rect(r.x+15,r.y+8,r.width-30,90),previews[votes[i]],ScaleMode.ScaleToFit);GUI.Label(new Rect(r.x+8,r.y+104,r.width-16,35),ArenaName(votes[i]),small);}GUI.EndScrollView();break;
+                {
+                    float ry=Header(x,w);
+                    ry+=CenterShift(ry,w<600?438:306,40);
+                    GUI.Label(new Rect(x,ry,w,40),"Arena roulette",heading);
+                    float rt=Time.time-rouletteStart;
+                    int index=rt>=3?selectedArena:(int)(rt*12)%ArenaCount;
+                    Chip(new Rect(x+(w-360)/2,ry+44,360,32),rt>=3?ArenaName(selectedArena)+"  •  Starting…":"Spinning… good luck!");
+                    int cols=w<600?6:11;float cellH=w<600?88:110;float gy=ry+86;float cw=w/cols;
+                    float pulse=rt>=3?.5f+.3f*Mathf.Sin(Time.time*12):0;
+                    for(int i=0;i<ArenaCount;i++)
+                    {
+                        Rect r=new Rect(x+(i%cols)*cw,gy+(i/cols)*cellH,cw-6,cellH-6);
+                        Card(r);
+                        if(i==index&&rt>=3)Fill(r,new Color(.15f,.78f,.42f,.35f+pulse*.4f));
+                        else if(i==index)Fill(r,new Color(.2f,.5f,.45f,.55f));
+                        float ih=cellH-46;
+                        GUI.DrawTexture(new Rect(r.x+5,r.y+4,r.width-10,ih),previews[votes[i]],ScaleMode.ScaleToFit);
+                        GUI.Label(new Rect(r.x+2,r.y+ih+5,r.width-4,36),ArenaName(votes[i]),new GUIStyle(small){fontSize=w<600?10:13,alignment=TextAnchor.UpperCenter,normal={textColor=i==index&&rt>=3?Color.white:UiTheme.Ink}});
+                    }
+                    break;
+                }
                 case ScreenMode.Results:
-                    GUI.contentColor=GameView.TeamColor(game.Winner);GUI.Label(new Rect(x,160,w,60),game.Winner.ToString().ToUpper()+" WINS",title);GUI.contentColor=Color.white;
-                    GUI.Label(new Rect(x,240,w,90),$"Red {Percent(game.RedCount):0.0}%     Blue {Percent(game.BlueCount):0.0}%",heading);
-                    Player p=game.Players[localId];GUI.Label(new Rect(x,340,w,140),$"Territory captured    {p.Captured} cells\nLargest capture        {p.Largest} cells\nTrail cuts   {p.Cuts}       Deaths   {p.Deaths}\nCoins collected    +{p.Coins}",label);
-                    if(hosting&&Btn(new Rect(x,500,250,55),"Return to lobby"))ReturnLobby();
-                    if(!hosting)GUI.Label(new Rect(x,500,w,45),"Waiting for host to return to lobby",label);
-                    if(Btn(new Rect(x,575,250,55),"Main menu")){network?.Dispose();network=null;screen=ScreenMode.Menu;}break;
+                {
+                    float ry2=Header(x,w);
+                    ry2+=CenterShift(ry2,442,40);
+                    float cw2=Mathf.Min(w,560),cx2=x+(w-cw2)/2;
+                    Panel(new Rect(cx2-14,ry2-6,cw2+28,436));
+                    GUI.contentColor=GameView.TeamColor(game.Winner);
+                    GUI.Label(new Rect(cx2,ry2,cw2,60),game.Winner.ToString().ToUpper()+" WINS",new GUIStyle(title){alignment=TextAnchor.MiddleCenter});
+                    GUI.contentColor=Color.white;
+                    Chip(new Rect(cx2+20,ry2+66,cw2/2-30,36),$"RED  {Percent(game.RedCount):0.0}%");
+                    Chip(new Rect(cx2+cw2/2+10,ry2+66,cw2/2-30,36),$"BLUE  {Percent(game.BlueCount):0.0}%");
+                    Player rp=game.Players[localId];
+                    GUI.Label(new Rect(cx2+20,ry2+112,cw2-40,130),$"Territory captured    {rp.Captured} cells\nLargest capture        {rp.Largest} cells\nTrail cuts   {rp.Cuts}       Deaths   {rp.Deaths}\nCoins collected    +{rp.Coins}",label);
+                    if(hosting&&TBtn(new Rect(cx2+20,ry2+252,250,55),"Return to lobby",UiTheme.BtnGreen))ReturnLobby();
+                    if(!hosting)GUI.Label(new Rect(cx2+20,ry2+252,cw2-40,45),"Waiting for host to return to lobby",label);
+                    if(TBtn(new Rect(cx2+20,ry2+318,cw2-40,55),"Main menu",UiTheme.BtnGray)){network?.Dispose();network=null;screen=ScreenMode.Menu;}
+                    break;
+                }
                 case ScreenMode.Collection: CollectionUI(x,w);break;
             }
         }
         void LobbyUI(float x,float w)
         {
             if(w<600){PortraitLobby(x,w);return;}
-            GUI.Label(new Rect(x,130,w,35),practice?"Practice lobby":hosting?"Host  /  "+SessionAddress():"Guest  /  "+(online?joinCode:address),heading);
-            GUI.Label(new Rect(x,174,w,40),status!=""?status:practice?"Second human slot uses CPU control":network?.Status,small);
-            GUI.contentColor=GameView.Red;if(Btn(new Rect(x,220,w*.23f,45),team==Team.Red?"Red  ✓":"Red")){team=Team.Red;ready=false;SendLobby();}
-            GUI.contentColor=GameView.Blue;if(Btn(new Rect(x+w*.25f,220,w*.23f,45),team==Team.Blue?"Blue  ✓":"Blue")){team=Team.Blue;ready=false;SendLobby();}GUI.contentColor=Color.white;
+            float y=Header(x,w);
+            y+=CenterShift(y,521,30);
+            GUI.Label(new Rect(x,y,w,34),practice?"Practice lobby":hosting?"Host  /  "+SessionAddress():"Guest  /  "+(online?joinCode:address),heading);y+=36;
+            GUI.Label(new Rect(x,y,w,30),status!=""?status:practice?"Second human slot uses CPU control":network?.Status,small);y+=34;
+            if(TBtn(new Rect(x,y,w*.23f,50),team==Team.Red?"Red  ✓":"Red",UiTheme.BtnRed)){team=Team.Red;ready=false;SendLobby();}
+            if(TBtn(new Rect(x+w*.25f,y,w*.23f,50),team==Team.Blue?"Blue  ✓":"Blue",UiTheme.BtnBlue)){team=Team.Blue;ready=false;SendLobby();}
             int red=(team==Team.Red?1:0)+(remoteTeam==Team.Red?1:0);
-            GUI.Label(new Rect(x+w*.52f,220,w*.48f,60),$"Red: {red} human + {5-red} CPU\nBlue: {2-red} human + {3+red} CPU",small);
-            if(Btn(new Rect(x,282,w*.48f,42),"Skin: "+SkinFactory.Names[skin])){var all=new List<int>(unlocked);all.Sort();skin=all[(all.IndexOf(skin)+1)%all.Count];Save();ready=false;SendLobby();}
-            if(hosting){GUI.Label(new Rect(x+w*.52f,285,110,30),"Minutes",small);duration=GUI.HorizontalSlider(new Rect(x+w*.66f,302,w*.24f,20),duration,60,600);duration=Mathf.Round(duration/60)*60;GUI.Label(new Rect(x+w*.92f,285,50,30),(duration/60).ToString("0"),label);}
-            GUI.Label(new Rect(x,342,w,34),"Your arena vote",label);
-            voteScroll=GUI.BeginScrollView(new Rect(x,382,w,200),voteScroll,new Rect(0,0,w-25,Mathf.Ceil(ArenaCount/5f)*104));
-            for(int i=0;i<ArenaCount;i++)
-            {
-                float cw=(w-25)/5;Rect r=new Rect(i%5*cw,(i/5)*104,cw-8,96);Fill(r,vote==i?new Color(.18f,.4f,.34f):new Color(.12f,.16f,.19f));
-                GUI.DrawTexture(new Rect(r.x+5,r.y+3,r.width-10,62),previews[i],ScaleMode.ScaleToFit);
-                if(GUI.Button(r,GUIContent.none,GUIStyle.none)&&Time.unscaledTime>suppressClickUntil){vote=i;ready=false;SendLobby();}
-                GUI.Label(new Rect(r.x+4,r.y+64,r.width-8,30),ArenaName(i),small);
-            }
-            GUI.EndScrollView();
-            if(Btn(new Rect(x,606,w*.28f,50),ready?"Ready ✓":"Ready")){ready=!ready;SendLobby();}
-            GUI.Label(new Rect(x+w*.32f,616,w*.33f,35),remoteReady?"Partner ready":"Partner not ready",small);
+            Chip(new Rect(x+w*.52f,y-4,w*.48f,58),$"Red {red} human + {5-red} CPU   •   Blue {2-red} human + {3+red} CPU");
+            y+=58;
+            if(TBtn(new Rect(x,y,w*.48f,48),"Skin: "+SkinFactory.Names[skin],UiTheme.BtnGray)){var all=new List<int>(unlocked);all.Sort();skin=all[(all.IndexOf(skin)+1)%all.Count];Save();ready=false;SendLobby();}
+            if(hosting){GUI.Label(new Rect(x+w*.52f,y,w*.52f,26),"Match length: "+(duration/60).ToString("0")+" minutes",small);ThemedMinutes(new Rect(x+w*.52f,y+24,w*.44f,22));}
+            y+=54;
+            GUI.Label(new Rect(x,y,w*.5f,28),"★ Your arena vote",label);
+            Chip(new Rect(x+w*.62f,y,w*.38f,28),"Pick your favorite arena!");
+            y+=30;
+            ArenaGrid(x,y,w,11,95,i=>i==vote,null,false,null);
+            y+=2*95+8;
+            if(TBtn(new Rect(x,y,w*.42f,52),ready?"Ready ✓":"Ready",ready?UiTheme.BtnGreen:UiTheme.BtnGray)){ready=!ready;SendLobby();}
+            Chip(new Rect(x+w*.45f,y+10,w*.2f,32),remoteReady?"Partner ready":"Partner not ready");
             GUI.enabled=ready&&(practice||network!=null&&network.Connected&&remoteReady);
-            if(hosting&&Btn(new Rect(x+w*.68f,606,w*.32f,50),"Start match"))Roulette();GUI.enabled=true;
-            if(Btn(new Rect(x,680,160,42),"Back")){network?.Dispose();network=null;screen=ScreenMode.Menu;}
-            if(hosting&&!practice&&Btn(new Rect(x+180,680,210,42),"Share join link"))ShareJoinLink();
-            if(!hosting&&network!=null&&!network.Connected&&Btn(new Rect(x+180,680,170,42),"Reconnect")){network.Dispose();network=NewSession();network.Join(online?joinCode:address);wasConnected=false;}
+            if(hosting&&TBtn(new Rect(x+w*.68f,y,w*.32f,52),"Start match",UiTheme.BtnGreen))Roulette();GUI.enabled=true;
+            y+=58;
+            if(TBtn(new Rect(x,y,160,44),"Back",UiTheme.BtnGray)){network?.Dispose();network=null;screen=ScreenMode.Menu;}
+            if(hosting&&!practice&&TBtn(new Rect(x+176,y,230,44),"Share join link",UiTheme.BtnBlue))ShareJoinLink();
+            if(!hosting&&network!=null&&!network.Connected&&TBtn(new Rect(x+176,y,190,44),"Reconnect",UiTheme.BtnBlue)){network.Dispose();network=NewSession();network.Join(online?joinCode:address);wasConnected=false;}
         }
         void PortraitLobby(float x,float w)
         {
-            float inner=w-20;int voteRows=(ArenaCount+1)/2;float bottom=350+voteRows*104+16;
-            lobbyScroll=GUI.BeginScrollView(new Rect(x,130,w,uiHeight-150),lobbyScroll,new Rect(0,0,inner,bottom+170));
-            GUI.Label(new Rect(0,0,inner,36),practice?"Practice lobby":hosting?"Host lobby":"Join lobby",heading);
-            GUI.Label(new Rect(0,42,inner,42),status!=""?status:practice?"Second slot: CPU":hosting?SessionAddress()+" / "+network?.Status:network?.Status,small);
-            GUI.contentColor=GameView.Red;if(Btn(new Rect(0,92,inner/2-5,48),team==Team.Red?"Red ✓":"Red")){team=Team.Red;ready=false;SendLobby();}
-            GUI.contentColor=GameView.Blue;if(Btn(new Rect(inner/2+5,92,inner/2-5,48),team==Team.Blue?"Blue ✓":"Blue")){team=Team.Blue;ready=false;SendLobby();}GUI.contentColor=Color.white;
-            int red=(team==Team.Red?1:0)+(remoteTeam==Team.Red?1:0);GUI.Label(new Rect(0,152,inner,52),$"Red: {red} human + {5-red} CPU\nBlue: {2-red} human + {3+red} CPU",small);
-            if(Btn(new Rect(0,214,inner,46),"Skin: "+SkinFactory.Names[skin])){var all=new List<int>(unlocked);all.Sort();skin=all[(all.IndexOf(skin)+1)%all.Count];Save();ready=false;SendLobby();}
-            GUI.Label(new Rect(0,272,inner,30),"Match: "+(duration/60).ToString("0")+" minutes",small);
-            if(hosting){duration=GUI.HorizontalSlider(new Rect(150,282,inner-150,20),duration,60,600);duration=Mathf.Round(duration/60)*60;}
-            GUI.Label(new Rect(0,310,inner,30),"Your arena vote",label);
-            for(int i=0;i<ArenaCount;i++)
-            {
-                Rect r=new Rect(i%2*inner/2,350+i/2*104,inner/2-8,96);Fill(r,vote==i?new Color(.18f,.4f,.34f):new Color(.12f,.16f,.19f));GUI.DrawTexture(new Rect(r.x+5,r.y+3,r.width-10,62),previews[i],ScaleMode.ScaleToFit);
-                if(GUI.Button(r,GUIContent.none,GUIStyle.none)&&Time.unscaledTime>suppressClickUntil){vote=i;ready=false;SendLobby();}GUI.Label(new Rect(r.x+4,r.y+64,r.width-8,30),ArenaName(i),small);
-            }
-            if(Btn(new Rect(0,bottom,inner*.46f,48),ready?"Ready ✓":"Ready")){ready=!ready;SendLobby();}
-            GUI.Label(new Rect(inner*.5f,bottom+5,inner*.5f,44),remoteReady?"Partner ready":"Partner not ready",small);
-            GUI.enabled=ready&&(practice||network!=null&&network.Connected&&remoteReady);if(hosting&&Btn(new Rect(0,bottom+60,inner,48),"Start match"))Roulette();GUI.enabled=true;
-            if(Btn(new Rect(0,bottom+120,inner*.46f,44),"Back")){network?.Dispose();network=null;screen=ScreenMode.Menu;}
-            if(hosting&&!practice&&Btn(new Rect(inner*.5f,bottom+120,inner*.5f,44),"Share join link"))ShareJoinLink();
-            if(!hosting&&network!=null&&!network.Connected&&Btn(new Rect(inner*.5f,bottom+120,inner*.5f,44),"Reconnect")){network.Dispose();network=NewSession();network.Join(online?joinCode:address);wasConnected=false;}
-            GUI.EndScrollView();
+            float y=Header(x,w);
+            y+=CenterShift(y,665,20);
+            GUI.Label(new Rect(x,y,w,32),practice?"Practice lobby":hosting?"Host lobby":"Join lobby",heading);y+=34;
+            GUI.Label(new Rect(x,y,w,28),status!=""?status:practice?"Second slot: CPU":hosting?SessionAddress()+" / "+network?.Status:network?.Status,small);y+=30;
+            if(TBtn(new Rect(x,y,w/2-5,46),team==Team.Red?"Red ✓":"Red",UiTheme.BtnRed)){team=Team.Red;ready=false;SendLobby();}
+            if(TBtn(new Rect(x+w/2+5,y,w/2-5,46),team==Team.Blue?"Blue ✓":"Blue",UiTheme.BtnBlue)){team=Team.Blue;ready=false;SendLobby();}
+            y+=52;
+            int red=(team==Team.Red?1:0)+(remoteTeam==Team.Red?1:0);
+            if(TBtn(new Rect(x,y,w*.55f,52),"◀ "+SkinFactory.Names[skin]+" ▶",UiTheme.BtnGray)){var all=new List<int>(unlocked);all.Sort();skin=all[(all.IndexOf(skin)+1)%all.Count];Save();ready=false;SendLobby();}
+            Chip(new Rect(x+w*.58f,y,w*.42f,52),$"Red {red}+{5-red} CPU\nBlue {2-red}+{3+red} CPU");
+            y+=58;
+            GUI.Label(new Rect(x,y,w*.55f,24),"Match: "+(duration/60).ToString("0")+" minutes",small);
+            if(hosting)ThemedMinutes(new Rect(x+w*.55f,y+2,w*.45f,20));
+            y+=28;
+            GUI.Label(new Rect(x,y,w,24),"★ Your arena vote",label);y+=26;
+            ArenaGrid(x,y,w,6,70,i=>i==vote,null,false,null);
+            y+=4*70+8;
+            if(TBtn(new Rect(x,y,w*.48f,46),ready?"Ready ✓":"Ready",ready?UiTheme.BtnGreen:UiTheme.BtnGray)){ready=!ready;SendLobby();}
+            GUI.enabled=ready&&(practice||network!=null&&network.Connected&&remoteReady);
+            if(hosting&&TBtn(new Rect(x+w*.52f,y,w*.48f,46),"Start match",UiTheme.BtnGreen))Roulette();else if(!hosting)Chip(new Rect(x+w*.52f,y+8,w*.48f,30),remoteReady?"Partner ready":"Waiting…");
+            GUI.enabled=true;
+            y+=52;
+            GUI.Label(new Rect(x,y,w,24),remoteReady?"Partner ready ✓":"Partner not ready",new GUIStyle(small){alignment=TextAnchor.MiddleCenter});
+            y+=26;
+            if(TBtn(new Rect(x,y,w*.48f,42),"Back",UiTheme.BtnGray)){network?.Dispose();network=null;screen=ScreenMode.Menu;}
+            if(hosting&&!practice&&TBtn(new Rect(x+w*.52f,y,w*.48f,42),"Share link",UiTheme.BtnBlue))ShareJoinLink();
+            if(!hosting&&network!=null&&!network.Connected&&TBtn(new Rect(x+w*.52f,y,w*.48f,42),"Reconnect",UiTheme.BtnBlue)){network.Dispose();network=NewSession();network.Join(online?joinCode:address);wasConnected=false;}
         }
         void CollectionUI(float x,float w)
         {
             bool narrow=w<600;
             if(string.IsNullOrEmpty(recoveryCode))recoveryCode=CreateRecoveryCode();
-            GUI.Label(new Rect(x,140,w,40),narrow?$"Collection  /  {wallet} coins":$"Capsule collection     {wallet} coins",heading);
-            GUI.DrawTexture(narrow?new Rect(x,180,w*.46f,160):new Rect(x+w*.62f,120,w*.36f,205),studio.Machine(Time.time-unlockTime),ScaleMode.ScaleToFit);
+            float cy=Header(x,w);
+            GUI.Label(new Rect(x,cy,narrow?w*.62f:w*.6f,40),"Capsule Collection",new GUIStyle(heading){fontSize=narrow?20:27});
+            Chip(new Rect(x+w*.64f,cy+4,w*.36f,32),wallet+" coins");
+            cy+=48;
+            float panelH=narrow?196:200;
+            Panel(new Rect(x-8,cy-6,w+16,panelH+12));
+            GUI.DrawTexture(narrow?new Rect(x,cy,w*.44f,160):new Rect(x+w*.62f,cy-4,w*.36f,190),studio.Machine(Time.time-unlockTime),ScaleMode.ScaleToFit);
             GUI.enabled=wallet>=Cost&&unlocked.Count<SkinFactory.Names.Length&&Time.time-unlockTime>=2;
-            if(Btn(narrow?new Rect(x+w*.49f,220,w*.51f,60):new Rect(x,200,Mathf.Min(w,400),55),narrow?$"Turn / {Cost} coins":$"Turn capsule machine  /  {Cost} coins"))
+            if(TBtn(narrow?new Rect(x+w*.47f,cy+10,w*.53f,60):new Rect(x,cy+20,Mathf.Min(w*.5f,380),55),narrow?$"Turn / {Cost} coins":$"Turn capsule  /  {Cost} coins",UiTheme.BtnRed))
             {
                 var locked=new List<int>();for(int i=0;i<SkinFactory.Names.Length;i++)if(!unlocked.Contains(i))locked.Add(i);
                 int choice=locked[UnityEngine.Random.Range(0,locked.Count)];wallet-=Cost;unlocked.Add(choice);skin=choice;reveal=SkinFactory.Names[choice]+" unlocked";unlockTime=Time.time;Save();sound.Play("unlock");
             }
-            GUI.enabled=true;GUI.Label(new Rect(x,narrow?345:270,narrow?w:w*.6f,38),Time.time-unlockTime>=2?reveal:"Opening capsule...",label);
-            float codeY=narrow?385:325;
-            GUI.Label(new Rect(x,codeY,w*.72f,22),"Recovery code",small);
-            GUI.Label(new Rect(x,codeY+19,w*.74f,36),recoveryCode,new GUIStyle(small){fontSize=narrow?10:12,wordWrap=false});
-            if(Btn(new Rect(x+w*.76f,codeY+16,w*.24f,36),"Copy")){GUIUtility.systemCopyBuffer=recoveryCode;recoveryCopied=true;}
-            GUI.Label(new Rect(x,codeY+56,w*.72f,22),recoveryCopied?"Copied to clipboard":"Keep this code somewhere safe",small);
-            restoreCode=GUI.TextField(new Rect(x,codeY+80,w*.74f,38),restoreCode);
-            if(Btn(new Rect(x+w*.76f,codeY+80,w*.24f,38),"Restore"))if(!RestoreRecoveryCode())reveal="Invalid recovery code";
-            float gridTop=narrow?589:529;
-            Fill(new Rect(x,gridTop-68,w,68),new Color(.07f,.10f,.13f,.95f));
-            GUI.DrawTexture(new Rect(x+6,gridTop-64,60,60),studio.BigIcon(skin),ScaleMode.ScaleToFit);
-            GUI.Label(new Rect(x+74,gridTop-66,w-80,20),"NOW USING",small);
-            GUI.Label(new Rect(x+74,gridTop-46,w-80,40),SkinFactory.Names[skin],new GUIStyle(heading){fontSize=narrow?20:24});
-            Rect area=new Rect(x,gridTop,w,uiHeight-gridTop-100);int columns=narrow?2:3;
-            collectionScroll=GUI.BeginScrollView(area,collectionScroll,new Rect(0,0,w-25,Mathf.Ceil(SkinFactory.Names.Length/(float)columns)*52));
+            GUI.enabled=true;
+            GUI.Label(narrow?new Rect(x+w*.47f,cy+78,w*.53f,110):new Rect(x,cy+85,Mathf.Min(w*.5f,380),100),Time.time-unlockTime>=2?reveal:"Opening capsule...",new GUIStyle(label){fontSize=narrow?17:19,wordWrap=true});
+            cy+=panelH+14;
+            Panel(new Rect(x-8,cy-6,w+16,narrow?150:150));
+            GUI.Label(new Rect(x,cy,w*.68f,22),"Recovery code",small);
+            GUI.Label(new Rect(x,cy+20,w*.68f,34),recoveryCode,new GUIStyle(small){fontSize=narrow?10:12,wordWrap=false});
+            if(TBtn(new Rect(x+w*.70f,cy+16,w*.30f,36),"Copy",UiTheme.BtnBlue)){GUIUtility.systemCopyBuffer=recoveryCode;recoveryCopied=true;}
+            GUI.Label(new Rect(x,cy+56,w*.68f,22),recoveryCopied?"Copied to clipboard":"Keep this code somewhere safe",small);
+            restoreCode=GUI.TextField(new Rect(x,cy+80,w*.68f,38),restoreCode);
+            if(TBtn(new Rect(x+w*.70f,cy+80,w*.30f,38),"Restore",UiTheme.BtnGray))if(!RestoreRecoveryCode())reveal="Invalid recovery code";
+            cy+=narrow?160:160;
+            Panel(new Rect(x-8,cy-6,w+16,76));
+            GUI.DrawTexture(new Rect(x+2,cy-2,64,64),studio.BigIcon(skin),ScaleMode.ScaleToFit);
+            Chip(new Rect(x+74,cy,w*.3f,24),"NOW USING");
+            GUI.Label(new Rect(x+74,cy+26,w-80,40),SkinFactory.Names[skin],new GUIStyle(heading){fontSize=narrow?20:24});
+            cy+=82;
+            Rect area=new Rect(x,cy,w,uiHeight-cy-70);int columns=narrow?2:3;float cellH=narrow?60:64;
+            collectionScroll=GUI.BeginScrollView(area,collectionScroll,new Rect(0,0,w-25,Mathf.Ceil(SkinFactory.Names.Length/(float)columns)*cellH));
             for(int i=0;i<SkinFactory.Names.Length;i++)
-            {GUI.enabled=unlocked.Contains(i);float cx=i%columns*(w-25)/columns,cy=i/columns*52,cellWidth=(w-25)/columns-8;var cell=new Rect(cx,cy,cellWidth,44);if(i==skin)Fill(cell,new Color(.95f,.73f,.16f,.22f));if(Btn(cell,"")){skin=i;Save();}GUI.DrawTexture(new Rect(cx+2,cy,40,40),studio.Icon(i),ScaleMode.ScaleToFit);GUI.Label(new Rect(cx+44,cy+6,cellWidth-46,36),(skin==i?"✓ ":"")+SkinFactory.Names[i],new GUIStyle(small){fontSize=narrow?13:16});}GUI.enabled=true;GUI.EndScrollView();
-            if(Btn(new Rect(x,uiHeight-75,200,45),"Back"))screen=ScreenMode.Menu;
+            {GUI.enabled=unlocked.Contains(i);float cx=i%columns*(w-25)/columns,cy2=i/columns*cellH,cellWidth=(w-25)/columns-8;var cell=new Rect(cx,cy2,cellWidth,cellH-8);Card(cell);if(i==skin)Fill(cell,new Color(.95f,.73f,.16f,.22f));if(GUI.Button(cell,GUIContent.none,GUIStyle.none)&&Time.unscaledTime>suppressClickUntil){skin=i;Save();}GUI.DrawTexture(new Rect(cx+4,cy2+4,48,48),studio.Icon(i),ScaleMode.ScaleToFit);GUI.Label(new Rect(cx+56,cy2+10,cellWidth-58,44),(skin==i?"✓ ":"")+SkinFactory.Names[i],new GUIStyle(small){fontSize=narrow?13:16,wordWrap=true,normal={textColor=unlocked.Contains(i)?UiTheme.Ink:new Color(.45f,.5f,.55f)}});}GUI.enabled=true;GUI.EndScrollView();
+            if(TBtn(new Rect(x,uiHeight-60,200,45),"Back",UiTheme.BtnGray))screen=ScreenMode.Menu;
         }
         void Hud()
         {
-            bool portrait=uiWidth<600;float scoreY=portrait?59:20;
-            Fill(new Rect(0,0,uiWidth,portrait?110:76),new Color(.045f,.06f,.08f,.9f));
-            GUI.contentColor=GameView.Red;GUI.Label(new Rect(16,scoreY,uiWidth*.46f,40),$"RED  {Percent(game.RedCount):0.0}%",portrait?label:heading);
-            GUI.contentColor=GameView.Blue;GUI.Label(new Rect(uiWidth*(portrait?.53f:.7f),scoreY,uiWidth*(portrait?.46f:.3f)-10,40),$"BLUE  {Percent(game.BlueCount):0.0}%",portrait?label:heading);GUI.contentColor=Color.white;
+            bool portrait=uiWidth<600;float barH=portrait?116:82;
+            Panel(new Rect(-20,-20,uiWidth+40,barH+20));
+            var scoreL=new GUIStyle(heading){fontSize=portrait?20:26,normal={textColor=GameView.Red}};
+            var scoreR=new GUIStyle(heading){fontSize=portrait?20:26,alignment=TextAnchor.MiddleRight,normal={textColor=GameView.Blue}};
+            GUI.Label(new Rect(20,portrait?10:8,uiWidth*.32f,40),$"RED  {Percent(game.RedCount):0.0}%",scoreL);
+            GUI.Label(new Rect(uiWidth-uiWidth*.32f-20,portrait?10:8,uiWidth*.32f,40),$"BLUE  {Percent(game.BlueCount):0.0}%",scoreR);
             string time=game.Phase==MatchPhase.Overtime?"OVERTIME":TimeSpan.FromSeconds(Mathf.Ceil(game.Remaining)).ToString(@"m\:ss");
-            var centered=new GUIStyle(heading){alignment=TextAnchor.MiddleCenter};GUI.Label(new Rect(uiWidth*.3f,14,uiWidth*.4f,48),time,centered);
-            Fill(new Rect(12,portrait?122:88,145,42),new Color(.045f,.06f,.08f,.85f));GUI.Label(new Rect(20,portrait?126:92,125,35),game.Players[localId].Coins+" coins",label);
-            float size=Mathf.Min(190,uiWidth*.28f);Rect map=new Rect(18,uiHeight-size-18,size,size);Fill(map,new Color(.055f,.08f,.1f,.88f));GUI.DrawTexture(map,view.Map);
+            Chip(new Rect(uiWidth/2-95,portrait?54:16,190,46),"");
+            GUI.Label(new Rect(uiWidth/2-95,portrait?54:16,190,46),time,new GUIStyle(heading){fontSize=24,alignment=TextAnchor.MiddleCenter});
+            Chip(new Rect(12,portrait?122:88,150,36),game.Players[localId].Coins+" coins");
+            float size=Mathf.Min(190,uiWidth*.28f);Rect map=new Rect(18,uiHeight-size-18,size,size);
+            Panel(new Rect(map.x-6,map.y-6,map.width+12,map.height+12));GUI.DrawTexture(map,view.Map);
             foreach(Player p in game.Players)
             {
                 if(!p.Alive)continue;float px=map.x+p.X/Arena.Size*size,py=map.yMax-p.Z/Arena.Size*size;
@@ -511,8 +616,12 @@ namespace PaperTrails
                 if(p.Human){GUI.DrawTexture(new Rect(px-12,py-12,24,24),studio.Icon(p.Skin),ScaleMode.ScaleToFit);GUI.Label(new Rect(px-40,py-25,100,22),NormalizeName(p.Name,p.Id==localId?"YOU":"P"+(p.Id+1)),new GUIStyle(small){fontSize=11,normal={textColor=Color.white}});}
             }
             for(int t=0;t<2;t++){int h=game.Arena.Hubs[t];GUI.Label(new Rect(map.x+(h%Arena.Size)/80f*size-5,map.yMax-(h/Arena.Size)/80f*size-10,20,20),"H",small);}
-            Player me=game.Players[localId];if(!me.Alive){Fill(new Rect(uiWidth/2-170,uiHeight/2-50,340,100),new Color(.05f,.07f,.09f,.93f));GUI.Label(new Rect(uiWidth/2-160,uiHeight/2-25,320,60),$"Respawning  {me.Respawn:0.0}",centered);}
-            if(reconnecting){Fill(new Rect(uiWidth/2-190,uiHeight/2-120,380,160),new Color(.05f,.07f,.09f,.93f));GUI.Label(new Rect(uiWidth/2-180,uiHeight/2-105,360,50),"Reconnecting…",centered);if(Btn(new Rect(uiWidth/2-140,uiHeight/2-40,280,50),"Back to lobby")){reconnecting=false;network?.Dispose();network=null;screen=ScreenMode.Menu;status="Disconnected.";}}
+            var centered=new GUIStyle(heading){alignment=TextAnchor.MiddleCenter};
+            Player me=game.Players[localId];if(!me.Alive){Panel(new Rect(uiWidth/2-170,uiHeight/2-50,340,100));GUI.Label(new Rect(uiWidth/2-160,uiHeight/2-25,320,60),$"Respawning  {me.Respawn:0.0}",centered);}
+            float remain=countdownEnd-Time.unscaledTime;
+            if(remain>0){Fill(new Rect(0,0,uiWidth,uiHeight),new Color(0,0,0,.45f));GUI.Label(new Rect(uiWidth/2-200,uiHeight/2-140,400,150),Mathf.CeilToInt(remain).ToString(),billboard);GUI.Label(new Rect(uiWidth/2-200,uiHeight/2+10,400,50),"Get Ready!",centered);}
+            else if(remain>-0.5f&&lastCount==0&&countdownEnd>0){Fill(new Rect(0,0,uiWidth,uiHeight),new Color(0,0,0,.25f));GUI.Label(new Rect(uiWidth/2-200,uiHeight/2-140,400,150),"GO!",new GUIStyle(billboard){normal={textColor=UiTheme.Mint}});}
+            if(reconnecting){Panel(new Rect(uiWidth/2-190,uiHeight/2-120,380,160));GUI.Label(new Rect(uiWidth/2-180,uiHeight/2-105,360,50),"Reconnecting…",centered);if(TBtn(new Rect(uiWidth/2-140,uiHeight/2-40,280,50),"Back to lobby",UiTheme.BtnGray)){reconnecting=false;network?.Dispose();network=null;screen=ScreenMode.Menu;status="Disconnected.";}}
         }
         float Percent(int count)=>100f*count/game.Arena.Claimable;
         static string ArenaName(int id)=>id>=0&&id<ArenaNames.Length?ArenaNames[id]:((ArenaKind)id).ToString();
