@@ -75,16 +75,16 @@ namespace PaperTrails.Core
             null, // Heart
             null, // Spiral
             null, // Diamond
-            new[]{5158, 1235}, // LightningBolt (38,64)-(35,15)
-            null, // Mustache
-            null, // Flare
-            new[]{4581, 1818}, // Cash (21,57)-(58,22)
-            null, // Tilda
-            new[]{5186, 1479}, // Triangle (66,64)-(39,18)
+            null, // LightningBolt
+            new[]{2623, 2650}, // Mustache (63,32)-(10,33)
+            new[]{900, 776}, // Flare (20,11)-(56,9)
+            new[]{4612, 2019}, // Cash (52,57)-(19,25)
+            new[]{3054, 3352}, // Tilda (14,38)-(72,41)
+            new[]{4920, 1130}, // Triangle (40,61)-(10,14)
             null, // Circle
             null, // Square
             new[]{4371, 1867}, // Parallelogram (51,54)-(27,23)
-            new[]{3870, 2689}, // CoolS (30,48)-(49,33)
+            null, // CoolS
             null, // CubicCurve
         };
         public bool IsSpawnable(int cell)
