@@ -3,7 +3,7 @@
      to the Unity player activity. android:exported comes from the base. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <application>
-    <activity android:name="com.unity3d.player.UnityPlayerActivity">
+    <activity android:name="com.unity3d.player.UnityPlayerActivity" android:enabled="true" android:exported="true">
       <!-- Launcher entry: the merger drops the base MAIN/LAUNCHER filter when
            this activity is redeclared, so it must be repeated here or the app
            installs with no icon and cannot be opened. -->

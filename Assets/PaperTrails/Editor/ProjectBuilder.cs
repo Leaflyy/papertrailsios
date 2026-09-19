@@ -43,7 +43,7 @@ namespace PaperTrails.Editor
         [MenuItem("PaperTrails/Build Windows")]
         public static void Windows(){Setup();Build("Builds/Windows/PaperTrails.exe",BuildTarget.StandaloneWindows64);}
         [MenuItem("PaperTrails/Build Android APK")]
-        public static void Android(){Setup();PlayerSettings.Android.minSdkVersion=AndroidSdkVersions.AndroidApiLevel26;PlayerSettings.Android.targetArchitectures=AndroidArchitecture.ARM64;PlayerSettings.SetScriptingBackend(UnityEditor.Build.NamedBuildTarget.Android,ScriptingImplementation.IL2CPP);PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android,false);PlayerSettings.SetGraphicsAPIs(BuildTarget.Android,new[]{GraphicsDeviceType.OpenGLES3});Build("Builds/Android/PaperTrails.apk",BuildTarget.Android);}
+        public static void Android(){Setup();PlayerSettings.Android.applicationEntry=AndroidApplicationEntry.Activity;PlayerSettings.Android.minSdkVersion=AndroidSdkVersions.AndroidApiLevel26;PlayerSettings.Android.targetArchitectures=AndroidArchitecture.ARM64;PlayerSettings.SetScriptingBackend(UnityEditor.Build.NamedBuildTarget.Android,ScriptingImplementation.IL2CPP);PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android,false);PlayerSettings.SetGraphicsAPIs(BuildTarget.Android,new[]{GraphicsDeviceType.OpenGLES3});Build("Builds/Android/PaperTrails.apk",BuildTarget.Android);}
         [MenuItem("PaperTrails/Build iOS Xcode")]
         public static void iOS(){Setup();PlayerSettings.SetScriptingBackend(UnityEditor.Build.NamedBuildTarget.iOS,ScriptingImplementation.IL2CPP);PlayerSettings.iOS.sdkVersion=iOSSdkVersion.DeviceSDK;Build("Builds/iOS",BuildTarget.iOS);}
         static void Build(string path,BuildTarget target)
