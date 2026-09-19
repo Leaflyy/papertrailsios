@@ -65,7 +65,7 @@ namespace PaperTrails.Core
 
         static readonly int[][] FairHubs = {
             null, // Star
-            null, // USA
+            new[]{3450, 3100}, // USA (10,43)-(60,38)
             null, // Donut
             null, // Cross
             new[]{5882, 854}, // CrescentMoon (42,73)-(54,10)

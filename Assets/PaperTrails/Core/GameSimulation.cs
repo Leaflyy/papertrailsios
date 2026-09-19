@@ -38,6 +38,8 @@ namespace PaperTrails.Core
         public Team Winner;
         public int RedCount, BlueCount;
         public Action<string,int,int> Event;
+        public IBotBrain BrainRed, BrainBlue;
+        public long StepCount;
         readonly Random random;
         readonly bool[] visited;
         readonly int[] queue, parent;
@@ -50,6 +52,8 @@ namespace PaperTrails.Core
             Owners = new Team[Arena.Mask.Length];
             visited = new bool[Owners.Length]; queue = new int[Owners.Length]; parent = new int[Owners.Length];
             Remaining = duration; random = new Random(seed);
+            BrainRed = new PheromoneV3(seed + 101);
+            BrainBlue = new PheromoneV3(seed + 202);
             for (int i = 0; i < Owners.Length; i++)
             {
                 Owners[i] = !Arena.Mask[i] ? Team.Blocked : Arena.Protected(i,Team.Red) ? Team.Red : Arena.Protected(i,Team.Blue) ? Team.Blue : Team.Neutral;
@@ -75,13 +79,14 @@ namespace PaperTrails.Core
         public void Step(float dt)
         {
             if (Phase==MatchPhase.Finished || dt<=0) return;
+            StepCount++;
             bool ending=Phase==MatchPhase.Playing && Remaining<=dt;
             if(ending)dt=Math.Max(0,Remaining-.000001f);
             if (Phase==MatchPhase.Playing) Remaining-=dt;
             foreach (Player p in Players)
             {
                 if (!p.Alive) { p.Respawn-=dt; if(p.Respawn<=0) Spawn(p); continue; }
-                if(!p.Human || !p.Connected) Bot(p,dt);
+                if(!p.Human || !p.Connected){IBotBrain brain=p.Team==Team.Red?BrainRed:BrainBlue;if(brain!=null)brain.Think(p,this,dt);else Bot(p,dt);}
                 float distance=(p.Human&&p.Connected?Speed:BotSpeed)*dt;
                 while(distance>0 && p.Alive && Phase!=MatchPhase.Finished)
                 {
@@ -407,7 +412,7 @@ namespace PaperTrails.Core
             }
             return best;
         }
-        void FindPath(Player p,int target,bool home)
+        public void FindPath(Player p,int target,bool home)
         {
             Array.Clear(visited,0,visited.Length);int head=0,tail=0,found=-1;
             queue[tail++]=p.Cell;visited[p.Cell]=true;parent[p.Cell]=-1;
