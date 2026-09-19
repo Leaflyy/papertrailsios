@@ -7,6 +7,9 @@ namespace PaperTrails
     {
         readonly Dictionary<int,RenderTexture> icons=new Dictionary<int,RenderTexture>();
         readonly Dictionary<int,RenderTexture> largeIcons=new Dictionary<int,RenderTexture>();
+        readonly Queue<(int skin,int size)> pending=new Queue<(int skin,int size)>();
+        readonly HashSet<string> queued=new HashSet<string>();
+        Texture2D placeholder;
         Camera cameraRig;
         Transform stage,machine,handle,ball;
         RenderTexture machineTexture;
@@ -14,17 +17,40 @@ namespace PaperTrails
         {
             stage=new GameObject("Cosmetic studio").transform;stage.position=new Vector3(1000,0,1000);
             cameraRig=new GameObject("Preview camera").AddComponent<Camera>();cameraRig.enabled=false;cameraRig.orthographic=true;cameraRig.orthographicSize=1.1f;cameraRig.clearFlags=CameraClearFlags.SolidColor;cameraRig.backgroundColor=Color.clear;cameraRig.cullingMask=1<<8;
+            placeholder=new Texture2D(4,4,TextureFormat.RGBA32,false);
+            var fill=new Color32(26,37,48,255);
+            for(int y=0;y<4;y++)for(int x=0;x<4;x++)placeholder.SetPixel(x,y,fill);
+            placeholder.Apply();
         }
         static void Layer(Transform root){root.gameObject.layer=8;foreach(Transform c in root)Layer(c);}
-        public Texture Icon(int skin)=>RenderIcon(skin,96,icons);
-        public Texture BigIcon(int skin)=>RenderIcon(skin,256,largeIcons);
-        Texture RenderIcon(int skin,int size,Dictionary<int,RenderTexture> cache)
+        public Texture Icon(int skin)=>GetOrQueue(skin,96,icons);
+        public Texture BigIcon(int skin)=>GetOrQueue(skin,256,largeIcons);
+        Texture GetOrQueue(int skin,int size,Dictionary<int,RenderTexture> cache)
         {
             if(cache.TryGetValue(skin,out var texture))return texture;
+            string key=skin+":"+size;
+            if(queued.Add(key))pending.Enqueue((skin,size));
+            return placeholder;
+        }
+        void Update()
+        {
+            // Rendering all 35 thumbnails at once (some are million-vertex
+            // meshes) froze the Collection screen for seconds. Spread the work
+            // so no single frame renders more than a few icons.
+            int perFrame=Application.isMobilePlatform?1:3;
+            for(int n=0;n<perFrame&&pending.Count>0;n++)
+            {
+                var job=pending.Dequeue();queued.Remove(job.skin+":"+job.size);
+                if(job.size==96){if(!icons.ContainsKey(job.skin))icons[job.skin]=RenderIcon(job.skin,96);}
+                else if(!largeIcons.ContainsKey(job.skin))largeIcons[job.skin]=RenderIcon(job.skin,256);
+            }
+        }
+        RenderTexture RenderIcon(int skin,int size)
+        {
             if(machine)machine.gameObject.SetActive(false);
             var model=SkinFactory.Create(skin,true,Color.white);model.transform.SetParent(stage,false);Layer(model.transform);
-            texture=new RenderTexture(size,size,16,RenderTextureFormat.ARGB32);texture.Create();
-            cameraRig.orthographicSize=1.1f;cameraRig.transform.position=stage.position+new Vector3(1.6f,2.4f,2.6f);cameraRig.transform.LookAt(stage.position+Vector3.up*.55f);cameraRig.targetTexture=texture;cameraRig.Render();model.SetActive(false);Destroy(model);cache.Add(skin,texture);return texture;
+            var texture=new RenderTexture(size,size,16,RenderTextureFormat.ARGB32);texture.Create();
+            cameraRig.orthographicSize=1.1f;cameraRig.transform.position=stage.position+new Vector3(1.6f,2.4f,2.6f);cameraRig.transform.LookAt(stage.position+Vector3.up*.55f);cameraRig.targetTexture=texture;cameraRig.Render();model.SetActive(false);Destroy(model);return texture;
         }
         public Texture Machine(float elapsed)
         {
@@ -48,6 +74,6 @@ namespace PaperTrails
             ball=SkinFactory.Part(machine,PrimitiveType.Sphere,new Vector3(0,.2f,.68f),Vector3.one*.4f,SkinFactory.Material(new Color(1,.8f,.1f))).transform;
             Layer(machine);machineTexture=new RenderTexture(384,384,16);machineTexture.Create();
         }
-        void OnDestroy(){foreach(var t in icons.Values)t.Release();foreach(var t in largeIcons.Values)t.Release();if(machineTexture)machineTexture.Release();if(stage)Destroy(stage.gameObject);if(cameraRig)Destroy(cameraRig.gameObject);}
+        void OnDestroy(){foreach(var t in icons.Values)t.Release();foreach(var t in largeIcons.Values)t.Release();if(placeholder)Destroy(placeholder);if(machineTexture)machineTexture.Release();if(stage)Destroy(stage.gameObject);if(cameraRig)Destroy(cameraRig.gameObject);}
     }
 }
