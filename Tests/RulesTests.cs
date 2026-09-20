@@ -171,6 +171,26 @@ static class RulesTests
             Check(!JoinLink.TryParse("papertrails://join?ip=999.1.1.1",out _,out _),"bad ip rejected");
             Check(!JoinLink.TryParse(null,out _,out _),"null link rejected");
         }
+        {
+            var g=Game();var p=g.Players[0];p.Human=true;p.Connected=true;
+            p.Alive=true;p.X=40.5f;p.Z=75.5f;p.Cell=C(40,75);p.DX=p.DesiredX=0;p.DZ=p.DesiredZ=1;
+            p.Trail.Clear();p.TrailSet.Clear();p.TrailPath.Clear();p.Route.Clear();p.Target=-1;
+            foreach(var o in g.Players)if(o!=p){o.Alive=false;o.Respawn=999;}
+            for(int i=0;i<30;i++)g.Step(GameSimulation.Tick);
+            Check(p.Alive,"wall grind preserves life");
+            Check(p.DX==1&&p.DZ==0,"wall grind snaps to the tangential axis");
+            Check(Math.Abs(p.X-40.5f)>1&&p.Z<78,"wall grind keeps sliding instead of bouncing");
+            Check(p.Trail.Count>0,"grinding outside turf extends the ribbon");
+            var q=g.Players[5];q.Alive=true;q.Respawn=0;q.Trail.Clear();q.TrailSet.Clear();q.TrailPath.Clear();
+            GridPoint mid=p.TrailPath[p.TrailPath.Count/2];
+            g.ResolveTrailContacts(q,mid.X-1,mid.Z,mid.X+1,mid.Z);
+            Check(!p.Alive&&p.Respawn==2&&q.Alive,"trail cut while wall riding still kills");
+            foreach(var other in g.Players){other.Alive=false;other.Respawn=999;}
+            var g2=new GameSimulation(ArenaKind.Skull,Team.Red,Team.Blue,5,300);
+            foreach(var bot in g2.Players)bot.Human=false;
+            for(int i=0;i<1500;i++)g2.Step(GameSimulation.Tick);
+            Check(100.0*(g2.RedCount+g2.BlueCount)/g2.Arena.Claimable>15,"bots keep covering ground with wall grinding");
+        }
         Console.WriteLine($"{checks} checks passed.");
     }
 }

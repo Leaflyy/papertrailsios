@@ -30,11 +30,27 @@ namespace PaperTrails
                     if (!inside) { px[y * w + x] = new Color32(0, 0, 0, 0); continue; }
                     float t = y / (float)(h - 1);
                     var c = Color32.Lerp(top, bottom, t);
-                    if (edge) c = border;
-                    else if (gloss > 0 && t < .45f)
+                    // Distance to the shape edge: corner arc in the rounded
+                    // zones, straight rect distance everywhere else.
+                    int dx = x < r ? r - x : (x >= w - r ? x - (w - r - 1) : -1);
+                    int dy = y < r ? r - y : (y >= h - r ? y - (h - r - 1) : -1);
+                    float edgeDist;
+                    if (dx < 0 || dy < 0) edgeDist = Mathf.Min(Mathf.Min(x, w - 1 - x), Mathf.Min(y, h - 1 - y));
+                    else edgeDist = r - Mathf.Sqrt(dx * dx + dy * dy);
+                    if (edgeDist < 2.5f) c = border;
+                    else
                     {
-                        byte g = (byte)(gloss * (1 - t / .45f));
-                        c = Color32.Lerp(c, new Color32(255, 255, 255, c.a), g / 255f);
+                        float sheen = gloss / 255f * 1.35f;
+                        if (t < .42f)
+                        {
+                            float g = sheen * (1 - t / .42f);
+                            c = Color32.Lerp(c, new Color32(255, 255, 255, c.a), Mathf.Clamp01(g));
+                        }
+                        if (edgeDist < 5.5f)
+                        {
+                            if (t < .5f) c = Color32.Lerp(c, new Color32(255, 255, 255, c.a), .28f * (1 - edgeDist / 5.5f));
+                            else c = Color32.Lerp(c, new Color32(0, 0, 0, c.a), .30f * (1 - edgeDist / 5.5f));
+                        }
                     }
                     px[y * w + x] = c;
                 }
@@ -51,7 +67,7 @@ namespace PaperTrails
                 {
                     float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c)) / c;
                     if (d > 1) { px[y * s + x] = new Color32(0, 0, 0, 0); continue; }
-                    var col = Color32.Lerp(face, rim, Mathf.Clamp01((d - .55f) / .45f));
+                    var col = d > .88f ? new Color32(20, 50, 90, 255) : Color32.Lerp(face, rim, Mathf.Clamp01((d - .55f) / .45f));
                     float gloss = Mathf.Clamp01(1 - d * 1.6f);
                     col = Color32.Lerp(col, new Color32(255, 255, 255, 255), gloss * .5f);
                     px[y * s + x] = col;

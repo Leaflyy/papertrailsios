@@ -7,7 +7,7 @@ namespace PaperTrails.Core
     public enum Personality { Aggressor, Explorer, Balanced }
     [Serializable] public sealed class Player
     {
-        public int Id, Skin, Cell, Captured, Cuts, Deaths, Largest, Coins, ExcursionLeg, Objective = -1;
+        public int Id, Skin, Cell, Captured, Cuts, Deaths, Largest, Coins, ExcursionLeg, Stuck, Objective = -1;
         public string Name;
         public Team Team;
         public bool Human, Connected, Alive = true, CanStartTrail = true;
@@ -114,21 +114,31 @@ namespace PaperTrails.Core
             Team enemy=p.Team==Team.Red?Team.Blue:Team.Red;
             if(cell<0 || Arena.Protected(cell,enemy))
             {
-                // Follow a free tangent at a wall. Never bounce back into the player's own active trail.
-                float originalX=p.DX,originalZ=p.DZ;bool found=false;
-                for(int turn=1;turn<=4&&!found;turn++)for(int sign=-1;sign<=1;sign+=2)
+                // Paper.io wall grind: pushing into a wall cancels only the
+                // into-the-wall component, so movement keeps sliding along
+                // the edge at full speed instead of bouncing off. Trail rules
+                // are untouched: grinding with an exposed ribbon is just as
+                // lethal as carving in the open. Only a true corner stops
+                // movement, and bots repath shortly after one.
+                bool slide=false;
+                for(int axis=0;axis<2&&!slide;axis++)
                 {
-                    double angle=turn*Math.PI/4*sign;float dx=originalX*(float)Math.Cos(angle)-originalZ*(float)Math.Sin(angle),dz=originalX*(float)Math.Sin(angle)+originalZ*(float)Math.Cos(angle);
+                    bool xAxis=(Math.Abs(p.DX)>=Math.Abs(p.DZ))==(axis==0);
+                    float dx=xAxis?(p.DX>=0?1:-1):0,dz=xAxis?0:(p.DZ>=0?1:-1);
                     float nx=p.X+dx*distance,nz=p.Z+dz*distance;int nc=Arena.WorldCell(nx,nz);
                     if(nc<0||Arena.Protected(nc,enemy)||nc!=p.Cell&&p.TrailSet.Contains(nc))continue;
-                    p.DX=p.DesiredX=dx;p.DZ=p.DesiredZ=dz;x=nx;z=nz;cell=nc;found=true;break;
+                    p.DX=dx;p.DZ=dz;x=nx;z=nz;cell=nc;slide=true;
                 }
-                p.Route.Clear();p.Target=-1;if(!found)return;
+                if(!slide)
+                {
+                    if(++p.Stuck>=6){p.Route.Clear();p.Target=-1;p.Stuck=0;}
+                    return;
+                }
             }
             float previousX=p.X,previousZ=p.Z;bool starting=p.Trail.Count==0;
             ResolveTrailContacts(p,previousX,previousZ,x,z);
             if(!p.Alive)return;
-            p.X=x;p.Z=z;
+            p.X=x;p.Z=z;p.Stuck=0;
             if(cell!=p.Cell) { p.Cell=cell; EnterCell(p,cell); }
             ResolveBodyContact(p);
             if(!p.Alive)return;
@@ -236,7 +246,7 @@ namespace PaperTrails.Core
             }
             p.Cell=cell;p.X=cell%Arena.Size+.5f;p.Z=cell/Arena.Size+.5f;
             double angle=(p.Id*.618+random.NextDouble()*.1)*Math.PI*2;
-            p.DX=p.DesiredX=(float)Math.Cos(angle);p.DZ=p.DesiredZ=(float)Math.Sin(angle);p.Alive=true;p.CanStartTrail=true;p.Respawn=0;p.Target=-1;p.Objective=-1;p.Route.Clear();
+            p.DX=p.DesiredX=(float)Math.Cos(angle);p.DZ=p.DesiredZ=(float)Math.Sin(angle);p.Alive=true;p.CanStartTrail=true;p.Respawn=0;p.Target=-1;p.Objective=-1;p.Stuck=0;p.Route.Clear();
             Event?.Invoke("respawn",p.Id,0);
         }
         static void ClearTrail(Player p) { p.Trail.Clear();p.TrailSet.Clear();p.TrailPath.Clear(); }
