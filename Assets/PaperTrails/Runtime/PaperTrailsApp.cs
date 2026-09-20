@@ -27,7 +27,7 @@ namespace PaperTrails
         int skin,remoteSkin,vote,remoteVote,wallet,localId,selectedArena,sendSeq;
         readonly SnapshotChunks.Assembler snapshotAsm=new SnapshotChunks.Assembler();
         float accumulator,sendTimer,finishSend,rouletteStart,nextClick,duration=300,unlockTime=-10,nextHeartbeat,reconnectUntil,lastRxTime;
-        int lastSecond=-1;
+        int lastSecond=-1,spinStep,spinTotal;
         int[] votes;
         string address="192.168.1.10",status="",remoteToken="",token,reveal="",recoveryCode="",restoreCode="",playerName="Player",remoteName="Player 2",lastCode="",lastAddress="",pendingLink=null;
         readonly HashSet<int> unlocked=new HashSet<int>();
@@ -124,8 +124,16 @@ namespace PaperTrails
             if(screen==ScreenMode.Roulette)
             {
                 float rt=Time.time-rouletteStart;
-                if(rt<3&&Time.time>=nextClick){sound.Play("roulette");nextClick=Time.time+Mathf.Lerp(.055f,.5f,rt/3);}
-                if(!rouletteLocked&&rt>=3){rouletteLocked=true;sound.Play("tick");}
+                // One easing clock drives both: each step advances one cell
+                // and plays one tick, intervals stretching cube-root style so
+                // ticks and selection slow down together and land on the
+                // winner exactly at 3s.
+                while(spinStep<spinTotal&&Time.time>=nextClick)
+                {
+                    spinStep++;sound.Play("roulette");
+                    if(spinStep>=spinTotal){rouletteLocked=true;sound.Play("tick");}
+                    else{float frac=(spinStep+1)/(float)spinTotal;nextClick=rouletteStart+3*(1-Mathf.Pow(1-frac,1f/3f));}
+                }
                 if(hosting && rt>=5f)StartMatch(selectedArena);
             }
             if(screen!=ScreenMode.Match)
@@ -230,7 +238,7 @@ namespace PaperTrails
                     else
                     {
                         if(p.type=="lobby") {reconnecting=false;if(screen==ScreenMode.Match)Bank();remoteName=NormalizeName(p.name,"Player");remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=p.skin;remoteVote=p.vote;remoteReady=p.ready;duration=p.duration;if(screen!=ScreenMode.Lobby)screen=ScreenMode.Lobby;}
-                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==ArenaCount){reconnecting=false;if(screen==ScreenMode.Match)Bank();votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;rouletteLocked=false;screen=ScreenMode.Roulette;}
+                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==ArenaCount){reconnecting=false;if(screen==ScreenMode.Match)Bank();votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;spinStep=0;spinTotal=2*ArenaCount+Math.Max(0,Array.IndexOf(votes,selectedArena));nextClick=rouletteStart;rouletteLocked=false;screen=ScreenMode.Roulette;}
                         if(p.type=="state")ApplySnapshot(p);
                         if(p.type=="error")status=p.message;
                     }
@@ -302,7 +310,7 @@ namespace PaperTrails
         {
             votes=new int[ArenaCount];votes[0]=vote;votes[1]=practice?UnityEngine.Random.Range(0,ArenaCount):remoteVote;
             for(int i=2;i<ArenaCount;i++)votes[i]=UnityEngine.Random.Range(0,ArenaCount);
-            selectedArena=votes[UnityEngine.Random.Range(0,ArenaCount)];rouletteStart=Time.time;nextClick=0;rouletteLocked=false;screen=ScreenMode.Roulette;
+            selectedArena=votes[UnityEngine.Random.Range(0,ArenaCount)];rouletteStart=Time.time;spinStep=0;spinTotal=2*ArenaCount+Math.Max(0,Array.IndexOf(votes,selectedArena));nextClick=rouletteStart;rouletteLocked=false;screen=ScreenMode.Roulette;
             Send(new Packet{type="roulette",votes=votes,arena=selectedArena});
         }
         void StartMatch(int arena)
@@ -457,22 +465,27 @@ namespace PaperTrails
                 case ScreenMode.Roulette:
                 {
                     float ry=Header(x,w);
-                    ry+=CenterShift(ry,w<600?438:306,40);
+                    bool narrowR=w<600;
+                    ry+=CenterShift(ry,narrowR?486:322,40);
                     GUI.Label(new Rect(x,ry,w,40),"Arena roulette",heading);
                     float rt=Time.time-rouletteStart;
-                    int index=rt>=3?selectedArena:(int)(rt*12)%ArenaCount;
+                    bool locked=rt>=3;
+                    int index=spinStep%ArenaCount;
                     Chip(new Rect(x+(w-360)/2,ry+44,360,32),rt>=3?ArenaName(selectedArena)+"  •  Starting…":"Spinning… good luck!");
-                    int cols=w<600?6:11;float cellH=w<600?88:110;float gy=ry+86;float cw=w/cols;
+                    int cols=narrowR?6:11;float cellH=narrowR?100:118;float gy=ry+86;float cw=w/cols;
                     float pulse=rt>=3?.5f+.3f*Mathf.Sin(Time.time*12):0;
+                    string nm0=hosting?playerName:remoteName,nm1=hosting?remoteName:playerName;
                     for(int i=0;i<ArenaCount;i++)
                     {
                         Rect r=new Rect(x+(i%cols)*cw,gy+(i/cols)*cellH,cw-6,cellH-6);
                         Card(r);
-                        if(i==index&&rt>=3)Fill(r,new Color(.15f,.78f,.42f,.35f+pulse*.4f));
-                        else if(i==index)Fill(r,new Color(.2f,.5f,.45f,.55f));
-                        float ih=cellH-46;
+                        bool won=locked&&votes[i]==selectedArena;
+                        if(won)Fill(r,new Color(.15f,.78f,.42f,.35f+pulse*.4f));
+                        else if(!locked&&i==index)Fill(r,new Color(.2f,.5f,.45f,.55f));
+                        float ih=narrowR?40:64;
                         GUI.DrawTexture(new Rect(r.x+5,r.y+4,r.width-10,ih),previews[votes[i]],ScaleMode.ScaleToFit);
-                        GUI.Label(new Rect(r.x+2,r.y+ih+5,r.width-4,36),ArenaName(votes[i]),new GUIStyle(small){fontSize=w<600?10:13,alignment=TextAnchor.UpperCenter,normal={textColor=i==index&&rt>=3?Color.white:UiTheme.Ink}});
+                        GUI.Label(new Rect(r.x+2,r.y+ih+5,r.width-4,36),ArenaName(votes[i]),new GUIStyle(small){fontSize=narrowR?10:13,alignment=TextAnchor.UpperCenter,normal={textColor=won?Color.white:UiTheme.Ink}});
+                        if(i<2)GUI.Label(new Rect(r.x+2,r.y+ih+41,r.width-4,14),ShortName(i==0?nm0:nm1),new GUIStyle(small){fontSize=narrowR?9:10,alignment=TextAnchor.UpperCenter,normal={textColor=UiTheme.Gold}});
                     }
                     break;
                 }
@@ -625,6 +638,7 @@ namespace PaperTrails
         }
         float Percent(int count)=>100f*count/game.Arena.Claimable;
         static string ArenaName(int id)=>id>=0&&id<ArenaNames.Length?ArenaNames[id]:((ArenaKind)id).ToString();
+        static string ShortName(string s){s=(s??"").Trim();return s.Length>9?s.Substring(0,9)+"…":s;}
         bool Btn(Rect r,string text)=>GUI.Button(r,text,button)&&Time.unscaledTime>suppressClickUntil;
         IGameSession NewSession()=>online?(IGameSession)new RelaySession():new LanSession();
         string SessionAddress()=>online?"Code "+network?.JoinCode:LocalAddress();
