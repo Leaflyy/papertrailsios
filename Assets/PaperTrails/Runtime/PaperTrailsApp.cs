@@ -426,6 +426,15 @@ namespace PaperTrails
                 if(GUI.Button(r,GUIContent.none,GUIStyle.none)&&Time.unscaledTime>suppressClickUntil){vote=i;ready=false;SendLobby();}
             }
         }
+        void SkinRow(float x,float y,float w)
+        {
+            var order=new List<int>(unlocked);order.Sort();
+            int at=Math.Max(0,order.IndexOf(skin));
+            if(TBtn(new Rect(x,y,46,52),"◀",UiTheme.BtnGray)){skin=order[(at-1+order.Count)%order.Count];Save();ready=false;SendLobby();}
+            if(TBtn(new Rect(x+w-46,y,46,52),"▶",UiTheme.BtnGray)){skin=order[(at+1)%order.Count];Save();ready=false;SendLobby();}
+            GUI.DrawTexture(new Rect(x+52,y+8,36,36),studio.Icon(skin),ScaleMode.ScaleToFit);
+            GUI.Label(new Rect(x+92,y,w-92-50,52),ShortName(SkinFactory.Names[skin]),new GUIStyle(label){fontSize=15,alignment=TextAnchor.MiddleLeft});
+        }
         void ThemedMinutes(Rect r)
         {
             duration=Mathf.Round(GUI.HorizontalSlider(r,duration,60,600,sliderBack,sliderKnob)/60)*60;
@@ -522,10 +531,10 @@ namespace PaperTrails
             int red=(team==Team.Red?1:0)+(remoteTeam==Team.Red?1:0);
             Chip(new Rect(x+w*.52f,y-4,w*.48f,58),$"Red {red} human + {5-red} CPU   •   Blue {2-red} human + {3+red} CPU");
             y+=58;
-            if(TBtn(new Rect(x,y,w*.48f,48),"Skin: "+SkinFactory.Names[skin],UiTheme.BtnGray)){var all=new List<int>(unlocked);all.Sort();skin=all[(all.IndexOf(skin)+1)%all.Count];Save();ready=false;SendLobby();}
+            SkinRow(x,y,w*.48f);
             if(hosting){GUI.Label(new Rect(x+w*.52f,y,w*.52f,26),"Match length: "+(duration/60).ToString("0")+" minutes",small);ThemedMinutes(new Rect(x+w*.52f,y+24,w*.44f,22));}
             y+=54;
-            GUI.Label(new Rect(x,y,w*.5f,28),"★ Your arena vote",label);
+            GUI.Label(new Rect(x,y,w*.5f,30),"Your arena vote",label);
             Chip(new Rect(x+w*.62f,y,w*.38f,28),"Pick your favorite arena!");
             y+=30;
             ArenaGrid(x,y,w,11,95,i=>i==vote,null,false,null);
@@ -549,13 +558,13 @@ namespace PaperTrails
             if(TBtn(new Rect(x+w/2+5,y,w/2-5,46),team==Team.Blue?"Blue ✓":"Blue",UiTheme.BtnBlue)){team=Team.Blue;ready=false;SendLobby();}
             y+=52;
             int red=(team==Team.Red?1:0)+(remoteTeam==Team.Red?1:0);
-            if(TBtn(new Rect(x,y,w*.55f,52),"◀ "+SkinFactory.Names[skin]+" ▶",UiTheme.BtnGray)){var all=new List<int>(unlocked);all.Sort();skin=all[(all.IndexOf(skin)+1)%all.Count];Save();ready=false;SendLobby();}
+            SkinRow(x,y,w*.55f);
             Chip(new Rect(x+w*.58f,y,w*.42f,52),$"Red {red}+{5-red} CPU\nBlue {2-red}+{3+red} CPU");
             y+=58;
             GUI.Label(new Rect(x,y,w*.55f,24),"Match: "+(duration/60).ToString("0")+" minutes",small);
             if(hosting)ThemedMinutes(new Rect(x+w*.55f,y+2,w*.45f,20));
             y+=28;
-            GUI.Label(new Rect(x,y,w,24),"★ Your arena vote",label);y+=26;
+            GUI.Label(new Rect(x,y,w,28),"Your arena vote",label);y+=30;
             ArenaGrid(x,y,w,6,70,i=>i==vote,null,false,null);
             y+=4*70+8;
             if(TBtn(new Rect(x,y,w*.48f,46),ready?"Ready ✓":"Ready",ready?UiTheme.BtnGreen:UiTheme.BtnGray)){ready=!ready;SendLobby();}
