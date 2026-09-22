@@ -114,12 +114,6 @@ namespace PaperTrails.Core
             Team enemy=p.Team==Team.Red?Team.Blue:Team.Red;
             if(cell<0 || Arena.Protected(cell,enemy))
             {
-                // Paper.io wall grind: pushing into a wall cancels only the
-                // into-the-wall component, so movement keeps sliding along
-                // the edge at full speed instead of bouncing off. Trail rules
-                // are untouched: grinding with an exposed ribbon is just as
-                // lethal as carving in the open. Only a true corner stops
-                // movement, and bots repath shortly after one.
                 bool slide=false;
                 for(int axis=0;axis<2&&!slide;axis++)
                 {
@@ -131,7 +125,26 @@ namespace PaperTrails.Core
                 }
                 if(!slide)
                 {
-                    if(++p.Stuck>=6){p.Route.Clear();p.Target=-1;p.Stuck=0;}
+                    float rx=p.X+p.DX*distance,rz=p.Z+p.DZ*distance;
+                    int rc=Arena.WorldCell(rx,rz);
+                    if(rc>=0&&!Arena.Protected(rc,enemy)&&(rc==p.Cell||!p.TrailSet.Contains(rc)))
+                    {x=rx;z=rz;cell=rc;slide=true;}
+                }
+                if(!slide)
+                {
+                    float rd=distance*.3f;
+                    for(int d=0;d<4&&!slide;d++)
+                    {
+                        float sdx=d==0?1:d==2?-1:0,sdz=d==1?1:d==3?-1:0;
+                        float rx=p.X+sdx*rd,rz=p.Z+sdz*rd;
+                        int rc=Arena.WorldCell(rx,rz);
+                        if(rc>=0&&!Arena.Protected(rc,enemy)&&(rc==p.Cell||!p.TrailSet.Contains(rc)))
+                        {p.DX=sdx;p.DZ=sdz;x=rx;z=rz;cell=rc;slide=true;}
+                    }
+                }
+                if(!slide)
+                {
+                    if(++p.Stuck>=3){p.Route.Clear();p.Target=-1;p.Stuck=0;}
                     return;
                 }
             }
@@ -432,7 +445,8 @@ namespace PaperTrails.Core
                 int c=queue[head++];
                 if(c!=p.Cell&&(home?Owners[c]==p.Team:c==target)){found=c;break;}
                 foreach(int n in Arena.Neighbors(c))
-                    if(Arena.Mask[n]&&!visited[n]&&!p.TrailSet.Contains(n)&&!Arena.Protected(n,enemy))
+                    if(Arena.Mask[n]&&!visited[n]&&!p.TrailSet.Contains(n)&&!Arena.Protected(n,enemy)
+                       &&Arena.WorldCell(n%Arena.Size+.5f,n/Arena.Size+.5f)>=0)
                     {visited[n]=true;parent[n]=c;queue[tail++]=n;}
             }
             if(found<0)return;
