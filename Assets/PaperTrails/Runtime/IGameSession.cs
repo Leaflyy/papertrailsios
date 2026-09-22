@@ -10,6 +10,7 @@ namespace PaperTrails
         string Status {get;}
         string JoinCode {get;}
         void Host();
+        void JoinPartner();
         void Join(string addressOrCode);
         void Send(string message);
         // Latest-wins traffic (snapshots, movement input): drops stale data

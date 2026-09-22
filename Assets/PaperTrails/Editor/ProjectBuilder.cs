@@ -46,6 +46,23 @@ namespace PaperTrails.Editor
         public static void Android(){Setup();PlayerSettings.Android.applicationEntry=AndroidApplicationEntry.Activity;PlayerSettings.Android.minSdkVersion=AndroidSdkVersions.AndroidApiLevel26;PlayerSettings.Android.targetArchitectures=AndroidArchitecture.ARM64;PlayerSettings.SetScriptingBackend(UnityEditor.Build.NamedBuildTarget.Android,ScriptingImplementation.IL2CPP);PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android,false);PlayerSettings.SetGraphicsAPIs(BuildTarget.Android,new[]{GraphicsDeviceType.OpenGLES3});Build("Builds/Android/PaperTrails.apk",BuildTarget.Android);}
         [MenuItem("PaperTrails/Build iOS Xcode")]
         public static void iOS(){Setup();PlayerSettings.SetScriptingBackend(UnityEditor.Build.NamedBuildTarget.iOS,ScriptingImplementation.IL2CPP);PlayerSettings.iOS.sdkVersion=iOSSdkVersion.DeviceSDK;Build("Builds/iOS",BuildTarget.iOS);}
+        [MenuItem("PaperTrails/Validate avatar sizes")]
+        public static void ValidateAvatarSizes()
+        {
+            for(int skin=0;skin<SkinFactory.Names.Length;skin++)
+            {
+                var avatar=SkinFactory.Create(skin,true,Color.red);var renderers=avatar.GetComponentsInChildren<Renderer>();bool found=false;Bounds bounds=new Bounds();
+                foreach(var renderer in renderers)if(renderer.gameObject.name!="TeamRing"){if(!found){bounds=renderer.bounds;found=true;}else bounds.Encapsulate(renderer.bounds);}
+                float maximum=Mathf.Max(bounds.size.x,Mathf.Max(bounds.size.y,bounds.size.z));UnityEngine.Object.DestroyImmediate(avatar);
+                float expected=SkinFactory.TargetVisualSize(skin);
+                if(!found||Mathf.Abs(maximum-expected)>.02f)throw new Exception("Avatar size normalization failed for "+SkinFactory.Names[skin]+": "+maximum+" (expected "+expected+")");
+            }
+            var cpu=SkinFactory.Create(0,false,Color.red);var cpuRenderers=cpu.GetComponentsInChildren<Renderer>();Bounds cpuBounds=new Bounds();bool cpuFound=false;
+            foreach(var renderer in cpuRenderers)if(!cpuFound){cpuBounds=renderer.bounds;cpuFound=true;}else cpuBounds.Encapsulate(renderer.bounds);
+            float cpuMaximum=Mathf.Max(cpuBounds.size.x,Mathf.Max(cpuBounds.size.y,cpuBounds.size.z));UnityEngine.Object.DestroyImmediate(cpu);
+            if(!cpuFound||Mathf.Abs(cpuMaximum-SkinFactory.TargetVisualSize(0))>.02f)throw new Exception("CPU cube size normalization failed: "+cpuMaximum);
+            Debug.Log("PAPERTRAILS_AVATAR_SIZES_OK count="+SkinFactory.Names.Length+" cpu="+cpuMaximum);
+        }
         static void Build(string path,BuildTarget target)
         {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));

@@ -12,6 +12,43 @@ namespace PaperTrails.Core
         void Think(Player p, GameSimulation s, float dt);
     }
 
+    // Easy deliberately has no shared state and never inspects teammates. Each
+    // CPU receives its own instance, walks to a nearby frontier, makes one
+    // modest independent excursion, and returns home.
+    sealed class EasyBrain : HiveDriver
+    {
+        public EasyBrain(int seed) : base(seed) { }
+        protected override int ExitTarget(Player p, GameSimulation s, St m)
+        {
+            Team foe = HiveUtil.Enemy(p.Team);
+            int best = -1, bestD = int.MaxValue;
+            for (int i = 0; i < HiveUtil.N; i++)
+            {
+                if (!s.Arena.Mask[i] || s.Owners[i] == p.Team || s.Arena.Protected(i, foe) || i == p.Cell || i == m.aux) continue;
+                if (!HiveUtil.IsFrontier(s, i, p.Team)) continue;
+                int d = Arena.DistanceSquared(i, p.Cell);
+                if (d < bestD || d == bestD && rng.Next(2) == 0) { bestD = d; best = i; }
+            }
+            return best;
+        }
+        protected override int WingTarget(Player p, GameSimulation s, St m)
+        {
+            Team foe = HiveUtil.Enemy(p.Team);
+            int best = -1; double bestScore = double.NegativeInfinity;
+            for (int dz = -9; dz <= 9; dz++)
+                for (int dx = -9; dx <= 9; dx++)
+                {
+                    int x = p.Cell % Arena.Size + dx, z = p.Cell / Arena.Size + dz;
+                    if (x < 0 || z < 0 || x >= Arena.Size || z >= Arena.Size) continue;
+                    int c = z * Arena.Size + x, d = dx * dx + dz * dz;
+                    if (!s.Arena.Mask[c] || s.Owners[c] == p.Team || s.Arena.Protected(c, foe) || d < 16 || d > 81) continue;
+                    double score = (s.Owners[c] == Team.Neutral ? 3 : 1) + rng.NextDouble() - d * .02;
+                    if (score > bestScore) { bestScore = score; best = c; }
+                }
+            return best;
+        }
+    }
+
     static class HiveUtil
     {
         public const int N = 80 * 80;
@@ -477,10 +514,79 @@ namespace PaperTrails.Core
         }
     }
 
-    sealed class PheromoneV3 : PheromoneV2
+    class PheromoneV3 : PheromoneV2
     {
         public PheromoneV3(int seed) : base(seed) { SafeLegs = 4; RiskLegs = 2; TrailCap = 34; }
         protected override int ReserveR => 6;
+    }
+
+    // Hard keeps the proven V3 driver but turns its loose pheromone spacing
+    // into an explicit team plan. Hard teammates share one brain, divide the
+    // map into radial sectors, reserve wider work zones, and favor the
+    // least-claimed neutral mass in their assigned lane. As sectors fill, the
+    // global scan naturally advances them around the full playable map.
+    sealed class HardHiveBrain : PheromoneV3
+    {
+        readonly Team assignedTeam;
+        readonly int[] slots = new int[10];
+        readonly int[] neutralIntegral = new int[81 * 81];
+        readonly int[] enemyIntegral = new int[81 * 81];
+        bool rosterReady;
+        int hardCount;
+        public HardHiveBrain(int seed, Team team) : base(seed) { assignedTeam = team; SafeLegs = 5; RiskLegs = 2; TrailCap = 30; }
+        protected override int ReserveR => 9;
+        protected override void Sense(GameSimulation s)
+        {
+            base.Sense(s);
+            Team foe = HiveUtil.Enemy(assignedTeam);
+            Array.Clear(neutralIntegral, 0, neutralIntegral.Length);
+            Array.Clear(enemyIntegral, 0, enemyIntegral.Length);
+            for (int z = 0; z < Arena.Size; z++)
+            {
+                int neutralRow = 0, enemyRow = 0;
+                for (int x = 0; x < Arena.Size; x++)
+                {
+                    Team owner = s.Owners[z * Arena.Size + x];
+                    if (owner == Team.Neutral) neutralRow++; else if (owner == foe) enemyRow++;
+                    int at = (z + 1) * 81 + x + 1;
+                    neutralIntegral[at] = neutralIntegral[at - 81] + neutralRow;
+                    enemyIntegral[at] = enemyIntegral[at - 81] + enemyRow;
+                }
+            }
+        }
+        int Area(int[] integral, int cx, int cz, int radius)
+        {
+            int x0 = Math.Max(0, cx - radius), z0 = Math.Max(0, cz - radius);
+            int x1 = Math.Min(Arena.Size - 1, cx + radius) + 1, z1 = Math.Min(Arena.Size - 1, cz + radius) + 1;
+            return integral[z1 * 81 + x1] - integral[z0 * 81 + x1] - integral[z1 * 81 + x0] + integral[z0 * 81 + x0];
+        }
+        void EnsureRoster(GameSimulation s)
+        {
+            if (rosterReady) return;
+            hardCount = 0;
+            foreach (Player q in s.Players)
+                if (q.Team == assignedTeam && !q.Human && q.BotDifficulty == BotDifficulty.Hard) slots[q.Id] = hardCount++;
+            hardCount = Math.Max(1, hardCount); rosterReady = true;
+        }
+        protected override float CellScore(GameSimulation s, Player p, int c)
+        {
+            float score = base.CellScore(s, p, c);
+            EnsureRoster(s);
+            int slot = slots[p.Id], count = hardCount;
+            int hub = HiveUtil.Hub(s, p.Team);
+            double dx = c % Arena.Size - hub % Arena.Size, dz = c / Arena.Size - hub / Arena.Size;
+            double length = Math.Sqrt(dx * dx + dz * dz);
+            if (length > .01)
+            {
+                double target = 2 * Math.PI * slot / count + (p.Team == Team.Blue ? Math.PI / count : 0);
+                double alignment = dx / length * Math.Cos(target) + dz / length * Math.Sin(target);
+                score += (float)(alignment * 12 + Math.Sqrt(length) * .55);
+            }
+            int cx = c % Arena.Size, cz = c / Arena.Size;
+            int neutral = Area(neutralIntegral, cx, cz, 5), enemy = Area(enemyIntegral, cx, cz, 5);
+            score += neutral * .10f + enemy * .035f;
+            return score;
+        }
     }
 
     // 4. Pincer pairs: teammates pair up, each pair owns a map quadrant, and

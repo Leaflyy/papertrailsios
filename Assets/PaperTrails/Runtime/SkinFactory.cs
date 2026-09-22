@@ -8,7 +8,17 @@ namespace PaperTrails
         static readonly System.Collections.Generic.Dictionary<int,string> PremiumModels=new System.Collections.Generic.Dictionary<int,string>{{4,"Skins/Cat/Cat"},{5,"Skins/Dog/Dog"},{6,"Skins/Husky/Husky"},{7,"Skins/Duck/Duck"},{8,"Skins/Shark/Shark"},{9,"Skins/Penguin/Penguin"},{10,"Skins/Frog/Frog"},{11,"Skins/Dinosaur/Dinosaur"},{12,"Skins/Bee/Bee"},{13,"Skins/SportsCar/SportsCar"},{14,"Skins/Tank/Tank"},{15,"Skins/UFO/UFO"},{16,"Skins/Rocket/Rocket"},{17,"Skins/Robot/Robot"},{18,"Skins/Astronaut/Astronaut"},{19,"Skins/Dragon/Dragon"},{20,"Skins/Ghost/Ghost"},{21,"Skins/Slime/Slime"},{22,"Skins/Burger/Burger"},{23,"Skins/Pizza/Pizza"},{24,"Skins/Donut/Donut"},{25,"Skins/Banana/Banana"},{26,"Skins/TrafficCone/TrafficCone"},{27,"Skins/RubberDuck/RubberDuck"},{28,"Skins/Eyeball/Eyeball"},{29,"Skins/Knife/Knife"},{34,"Skins/Jinxie/Jinxie"}};
         static readonly System.Collections.Generic.Dictionary<int,float> PremiumYaw=new System.Collections.Generic.Dictionary<int,float>{{4,0f},{6,0f},{13,-90f},{14,-90f},{17,0f}};
         static readonly System.Collections.Generic.Dictionary<int,float> PremiumPitch=new System.Collections.Generic.Dictionary<int,float>{{29,90f}};
-        static readonly System.Collections.Generic.Dictionary<int,float> PremiumSize=new System.Collections.Generic.Dictionary<int,float>{{4,1.5f},{5,1.5f},{6,1.5f},{7,1.5f},{8,1.5f},{9,1.5f},{10,1.5f},{11,1.5f},{12,1.5f},{13,1.3f},{14,1.3f},{15,1.3f},{16,1.3f},{17,1.6f},{18,1.4f},{19,1.5f},{20,1.4f},{21,1.3f},{22,1.3f},{23,1.3f},{24,1.3f},{25,1.3f},{26,0.95f},{27,1.4f},{28,1.2f},{29,1.3f},{34,1.4f}};
+        const float AvatarSize=1.15f;
+        const float CubeAvatarSize=.70f;
+        const float BlockAvatarSize=.70f;
+        public static float TargetVisualSize(int skin)
+        {
+            // Solid cubes occupy much more visible area than rounded or narrow
+            // silhouettes at the same bounding-box width. Give the cube family
+            // a smaller target so they read as peers during actual gameplay.
+            if(skin>=30&&skin<=33)return BlockAvatarSize;
+            return skin==0||skin==1?CubeAvatarSize:AvatarSize;
+        }
         static void WirePremiumTextures(GameObject model,int skin)
         {
             // The FBX material import loses its texture links when the model file
@@ -56,7 +66,6 @@ namespace PaperTrails
             foreach(var r in model.GetComponentsInChildren<Renderer>())r.shadowCastingMode=UnityEngine.Rendering.ShadowCastingMode.On;
             WirePremiumTextures(model,skin);
             NormalizeSize(model);
-            if(PremiumSize.TryGetValue(skin,out var ps))model.transform.localScale*=ps;
             var renderers=model.GetComponentsInChildren<Renderer>();
             if(renderers.Length>0)
             {
@@ -64,7 +73,7 @@ namespace PaperTrails
                 for(int i=1;i<renderers.Length;i++)bounds.Encapsulate(renderers[i].bounds);
                 model.transform.position+=new Vector3(0,.09f-bounds.min.y,0);
             }
-            Part(root.transform,PrimitiveType.Cylinder,new Vector3(0,.08f,0),new Vector3(1.25f,.035f,1.25f),Material(team));
+            var teamRing=Part(root.transform,PrimitiveType.Cylinder,new Vector3(0,.08f,0),new Vector3(1.25f,.035f,1.25f),Material(team));teamRing.name="TeamRing";
             return root;
         }
         public static Material Material(Color c,float metallic=0)
@@ -82,20 +91,21 @@ namespace PaperTrails
                 if(premium!=null)return premium;
             }
             var root=new GameObject(human?Names[skin]:"CPU");
+            var visual=new GameObject("Visual");visual.transform.SetParent(root.transform,false);Transform avatar=visual.transform;
             var white=Material(new Color(.93f,.95f,.97f));var black=Material(new Color(.08f,.10f,.13f));
             Color[] palette={new Color(.95f,.73f,.16f),new Color(.28f,.85f,.65f),new Color(.96f,.42f,.67f),new Color(.75f,.8f,.87f)};
             var body=Material(human?palette[skin%4]:team);var dark=Material(new Color(.26f,.31f,.36f));
             if(skin==3)body.color=new Color(.92f,.08f,.12f);
             if(skin==7||skin==12||skin==25||skin==27)body.color=new Color(1,.8f,.15f);
             if(skin==10||skin==11||skin==19||skin==21)body.color=new Color(.23f,.8f,.42f);
-            void Add(PrimitiveType shape,float x,float y,float z,float sx,float sy,float sz,Material m)=>Part(root.transform,shape,new Vector3(x,y,z),new Vector3(sx,sy,sz),m);
-            if(!human){Add(PrimitiveType.Cube,0,.43f,0,.8f,.72f,.8f,body);NormalizeSize(root);return root;}
-            Add(PrimitiveType.Cylinder,0,.08f,0,1.25f,.035f,1.25f,Material(team));
+            void Add(PrimitiveType shape,float x,float y,float z,float sx,float sy,float sz,Material m)=>Part(avatar,shape,new Vector3(x,y,z),new Vector3(sx,sy,sz),m);
+            if(!human){Add(PrimitiveType.Cube,0,.43f,0,.8f,.72f,.8f,body);NormalizeSize(visual,TargetVisualSize(0));return root;}
+            var teamRing=Part(root.transform,PrimitiveType.Cylinder,new Vector3(0,.08f,0),new Vector3(1.25f,.035f,1.25f),Material(team));teamRing.name="TeamRing";
             if(skin==15){Add(PrimitiveType.Sphere,0,.4f,0,1.45f,.28f,1.45f,dark);Add(PrimitiveType.Sphere,0,.63f,0,.7f,.6f,.7f,body);}
             else if(skin==20||skin==21)
             {Add(PrimitiveType.Sphere,0,.52f,0,1.1f,.8f,1.05f,skin==20?white:body);for(int i=-1;i<=1;i+=2)Add(PrimitiveType.Sphere,i*.22f,.7f,.43f,.15f,.2f,.1f,black);if(skin==20)for(int i=-1;i<=1;i++)Add(PrimitiveType.Sphere,i*.33f,.19f,0,.4f,.4f,.65f,white);}
             else if(skin==23)
-            {Wedge(root.transform,new[]{new Vector2(-.6f,-.5f),new Vector2(.6f,-.5f),new Vector2(0,.75f)},.2f,Material(new Color(1,.77f,.25f)));Add(PrimitiveType.Sphere,-.22f,.26f,-.12f,.23f,.07f,.23f,Material(new Color(.85f,.15f,.14f)));Add(PrimitiveType.Sphere,.2f,.26f,-.24f,.23f,.07f,.23f,Material(new Color(.85f,.15f,.14f)));}
+            {Wedge(avatar,new[]{new Vector2(-.6f,-.5f),new Vector2(.6f,-.5f),new Vector2(0,.75f)},.2f,Material(new Color(1,.77f,.25f)));Add(PrimitiveType.Sphere,-.22f,.26f,-.12f,.23f,.07f,.23f,Material(new Color(.85f,.15f,.14f)));Add(PrimitiveType.Sphere,.2f,.26f,-.24f,.23f,.07f,.23f,Material(new Color(.85f,.15f,.14f)));}
             else if(skin==25)
             {for(int i=0;i<7;i++){float a=-1+i/6f*2;Add(PrimitiveType.Sphere,Mathf.Cos(a)*.7f-.4f,.48f,Mathf.Sin(a)*.7f,.35f,.35f,.35f,body);}Add(PrimitiveType.Cube,0,.48f,.67f,.18f,.18f,.18f,dark);}
             else if(skin==1){Add(PrimitiveType.Sphere,0,.62f,0,1,1,1,body);}
@@ -115,7 +125,7 @@ namespace PaperTrails
                 Add(PrimitiveType.Cube,0,1.02f,-.57f,.62f,.5f,.18f,light);Add(PrimitiveType.Cube,0,1.08f,-.68f,.16f,.16f,.08f,pink);
                 for(int side=-1;side<=1;side+=2){Add(PrimitiveType.Cube,side*.28f,1.22f,-.56f,.14f,.16f,.08f,black);Add(PrimitiveType.Cube,side*.39f,1.62f,-.18f,.28f,.7f,.28f,gray);Add(PrimitiveType.Cube,side*.39f,1.5f,-.3f,.18f,.18f,.08f,pink);Add(PrimitiveType.Cube,side*.38f,.05f,.28f,.34f,.3f,.45f,light);}
                 for(int side=-1;side<=1;side+=2){for(int stripe=0;stripe<2;stripe++)Add(PrimitiveType.Cube,side*.53f,.9f,-.58f,.08f,.08f,.2f,dark);}
-                for(int segment=0;segment<3;segment++){var tail=Part(root.transform,PrimitiveType.Cube,new Vector3(.62f,.72f,-.48f-segment*.28f),new Vector3(.32f,.32f,.7f),gray);tail.transform.localRotation=Quaternion.Euler(-18+segment*18,0,segment*18);}
+                for(int segment=0;segment<3;segment++){var tail=Part(avatar,PrimitiveType.Cube,new Vector3(.62f,.72f,-.48f-segment*.28f),new Vector3(.32f,.32f,.7f),gray);tail.transform.localRotation=Quaternion.Euler(-18+segment*18,0,segment*18);}
             }
             else if(skin==5||skin==6||skin==9||skin==10||skin==11||skin==19)
             {
@@ -123,33 +133,33 @@ namespace PaperTrails
                 Add(PrimitiveType.Sphere,0,.55f,0,.8f,.8f,1.0f,coat);Add(PrimitiveType.Sphere,0,.88f,.4f,.74f,.7f,.65f,coat);
                 Add(PrimitiveType.Sphere,0,.71f,.68f,.56f,.4f,.28f,white);
                 for(int i=-1;i<=1;i+=2){Add(PrimitiveType.Cube,i*.25f,1.2f,.37f,.18f,.38f,.23f,coat);Add(PrimitiveType.Sphere,i*.18f,.98f,.68f,.1f,.1f,.08f,black);}
-                var tail=Part(root.transform,PrimitiveType.Capsule,new Vector3(0,.8f,-.5f),new Vector3(.24f,.4f,.24f),husky?white:coat);tail.transform.localRotation=Quaternion.Euler(55,0,0);
+                var tail=Part(avatar,PrimitiveType.Capsule,new Vector3(0,.8f,-.5f),new Vector3(.24f,.4f,.24f),husky?white:coat);tail.transform.localRotation=Quaternion.Euler(55,0,0);
                 if(husky){Add(PrimitiveType.Sphere,0,.4f,.28f,.7f,.64f,.5f,white);Add(PrimitiveType.Sphere,0,1.08f,-.57f,.42f,.35f,.4f,white);for(int i=-1;i<=1;i+=2)Add(PrimitiveType.Sphere,i*.3f,.2f,.3f,.27f,.25f,.35f,white);}
                 if(skin==9){Add(PrimitiveType.Sphere,0,.54f,.41f,.6f,.65f,.23f,white);Add(PrimitiveType.Cube,0,.82f,.79f,.2f,.18f,.22f,Material(new Color(1,.7f,.1f)));}
                 if(skin==10){for(int i=-1;i<=1;i+=2){Add(PrimitiveType.Sphere,i*.3f,1.16f,.5f,.35f,.35f,.35f,white);Add(PrimitiveType.Sphere,i*.3f,1.17f,.66f,.17f,.17f,.1f,black);}}
-                if(skin==19){for(int side=-1;side<=1;side+=2){var wing=Part(root.transform,PrimitiveType.Cube,new Vector3(side*.65f,.85f,-.1f),new Vector3(.9f,.1f,.7f),body);wing.transform.localRotation=Quaternion.Euler(0,side*25,side*25);}}
+                if(skin==19){for(int side=-1;side<=1;side+=2){var wing=Part(avatar,PrimitiveType.Cube,new Vector3(side*.65f,.85f,-.1f),new Vector3(.9f,.1f,.7f),body);wing.transform.localRotation=Quaternion.Euler(0,side*25,side*25);}}
             }
             else if(skin==7||skin==27||skin==12||skin==8)
-            {Add(PrimitiveType.Sphere,0,.5f,0,1,.7f,1.15f,body);Add(PrimitiveType.Sphere,0,.84f,.35f,.6f,.6f,.6f,body);Add(PrimitiveType.Cube,0,.78f,.7f,.4f,.14f,.3f,Material(new Color(1,.4f,.08f)));if(skin==12){Add(PrimitiveType.Sphere,-.55f,.8f,0,.5f,.13f,.6f,white);Add(PrimitiveType.Sphere,.55f,.8f,0,.5f,.13f,.6f,white);Add(PrimitiveType.Cube,0,.5f,-.15f,1.02f,.6f,.16f,black);}if(skin==8){var fin=Part(root.transform,PrimitiveType.Cube,new Vector3(0,1.06f,-.1f),new Vector3(.12f,.55f,.48f),dark);fin.transform.localRotation=Quaternion.Euler(-25,0,0);}}
+            {Add(PrimitiveType.Sphere,0,.5f,0,1,.7f,1.15f,body);Add(PrimitiveType.Sphere,0,.84f,.35f,.6f,.6f,.6f,body);Add(PrimitiveType.Cube,0,.78f,.7f,.4f,.14f,.3f,Material(new Color(1,.4f,.08f)));if(skin==12){Add(PrimitiveType.Sphere,-.55f,.8f,0,.5f,.13f,.6f,white);Add(PrimitiveType.Sphere,.55f,.8f,0,.5f,.13f,.6f,white);Add(PrimitiveType.Cube,0,.5f,-.15f,1.02f,.6f,.16f,black);}if(skin==8){var fin=Part(avatar,PrimitiveType.Cube,new Vector3(0,1.06f,-.1f),new Vector3(.12f,.55f,.48f),dark);fin.transform.localRotation=Quaternion.Euler(-25,0,0);}}
             else if(skin==17||skin==18||skin==16)
             {Add(PrimitiveType.Capsule,0,.6f,0,.75f,.5f,.75f,white);Add(PrimitiveType.Sphere,0,1.05f,0,.75f,.7f,.75f,dark);Add(PrimitiveType.Cube,0,1.05f,.34f,.48f,.28f,.12f,body);}
             else if(skin==22){Add(PrimitiveType.Cylinder,0,.4f,0,1.1f,.2f,1.1f,Material(new Color(.92f,.55f,.17f)));Add(PrimitiveType.Cylinder,0,.45f,0,1.16f,.04f,1.16f,Material(new Color(.24f,.65f,.24f)));Add(PrimitiveType.Cylinder,0,.57f,0,1.08f,.05f,1.08f,dark);}
             else if(skin==24){for(int i=0;i<12;i++){float a=i*Mathf.PI/6;Add(PrimitiveType.Sphere,Mathf.Cos(a)*.43f,.45f,Mathf.Sin(a)*.43f,.4f,.4f,.4f,body);}}
-            else if(skin==2){var points=new Vector2[10];for(int i=0;i<10;i++){float a=Mathf.PI/2+i*Mathf.PI/5;points[i]=new Vector2(Mathf.Cos(a),Mathf.Sin(a))*(i%2==0?.8f:.36f);}Wedge(root.transform,points,.4f,body);}
-            else if(skin==3){Heart(root.transform,body);}
+            else if(skin==2){var points=new Vector2[10];for(int i=0;i<10;i++){float a=Mathf.PI/2+i*Mathf.PI/5;points[i]=new Vector2(Mathf.Cos(a),Mathf.Sin(a))*(i%2==0?.8f:.36f);}Wedge(avatar,points,.4f,body);}
+            else if(skin==3){Heart(avatar,body);}
             else if(skin==26){for(int i=0;i<5;i++)Add(PrimitiveType.Cylinder,0,.2f+i*.17f,0,.8f-i*.14f,.09f,.8f-i*.14f,i%2==0?body:white);}
             else {Add(skin==0?PrimitiveType.Cube:PrimitiveType.Sphere,0,.6f,0,.95f,.95f,.95f,body);if(skin==28){Add(PrimitiveType.Sphere,0,.65f,.43f,.5f,.5f,.2f,white);Add(PrimitiveType.Sphere,0,.65f,.55f,.23f,.23f,.12f,black);}}
-            NormalizeSize(root);
+            NormalizeSize(visual,TargetVisualSize(skin));
             return root;
         }
-        static void NormalizeSize(GameObject root)
+        static void NormalizeSize(GameObject root,float targetSize=AvatarSize)
         {
             var renderers=root.GetComponentsInChildren<Renderer>();
             if(renderers.Length==0)return;
             Bounds bounds=renderers[0].bounds;
             for(int i=1;i<renderers.Length;i++)bounds.Encapsulate(renderers[i].bounds);
             float maximum=Mathf.Max(bounds.size.x,Mathf.Max(bounds.size.y,bounds.size.z));
-            if(maximum>.01f)root.transform.localScale*=.8f/maximum;
+            if(maximum>.01f)root.transform.localScale*=targetSize/maximum;
         }
         static GameObject Heart(Transform root,Material material)
         {

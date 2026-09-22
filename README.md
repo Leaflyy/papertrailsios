@@ -8,21 +8,30 @@ Current verification and device-test limits: [Docs/VALIDATION.md](Docs/VALIDATIO
 ## Play
 
 Open `Builds/Windows/PaperTrails.exe`, then choose **Practice with CPUs**. Pick a
-team, skin, and arena vote, press **Ready**, then **Start match**. Practice keeps
+team, skin, arena vote, and host-controlled CPU difficulty, press **Ready**, then **Start match**. Practice keeps
 the two human slots, with the absent partner under CPU control. Standard LAN
 matches require both humans to connect and ready up.
+
+CPU difficulty has three lobby settings. Easy CPUs make independent basic
+expansion decisions. Medium is the original shared Pheromone V3 behavior.
+Hard CPUs move at 1.5x human speed and share sector assignments, wide work-zone
+reservations, and neutral-territory priorities. With both humans on one team,
+that team's CPUs remain Medium while the CPU-only opponents are Hard. With one
+human per team, each team receives two Hard CPUs and two Medium CPUs.
 
 Movement is continuous. Drag/swipe anywhere to change direction. On desktop,
 WASD and arrow keys also steer. Release input to keep the current heading.
 Leave friendly turf, draw a loop, and return to friendly turf to capture it.
 Cut enemy trails, avoid your own, and freely cross friendly trails.
 
-For online play, select **Online** and **Host game**. Share the six-character
-code displayed in the lobby. The other player selects **Online**, enters that
-code, and presses **Join game**. Unity Relay carries encrypted traffic; the
-hosting player's own device runs the authoritative simulation, bots, scoring,
-and match timer. No router port forwarding is required. The project is linked
-to the PaperTrails Unity Services project and Relay is enabled.
+For online play, select **Online**. One player presses **Host for Partner** and
+the other presses **Join Partner**. Unity Lobby finds the matching two-person
+room and passes its Relay connection details to the joining phone internally;
+there is no code to type or send. The host's device runs the authoritative
+simulation, bots, scoring, and match timer. No router port forwarding is
+required. Both players can open **Collection** from the lobby to use capsules
+or change skins without leaving the room. **Use a join code instead** retains
+the old flow as a fallback.
 
 For LAN play, select **LAN**, host on one device and enter that device's IPv4 address on the
 other. Both devices must be on the same reachable LAN. TCP port 27851 is used.
@@ -62,16 +71,18 @@ install an iPhone build. The iOS app has not been built or tested here.
 - Tunable 1-10 minute lobby duration, five-minute default; exact cell-count
   scoring, neutral turf in the denominator, blocked cells excluded, unfinished
   regulation trails discarded, first new capture wins tied overtime.
-- Three baseline bot personalities, host-controlled pathfinding and expansion.
+- Three host-selected CPU difficulties: independent Easy, original hive-based
+  Medium, and faster sector-coordinated Hard with mixed-team balancing.
 - Ten procedural arena masks, all ten participants' votes, weighted selection,
   and an animated vote display.
 - Smoothed shared contour vertices without visible tiles; the grid stays internal.
 - Nonlethal walls slide the character along the same smoothed arena boundary.
 - Chunked 16x16 territory meshes, interpolated characters, continuous trails, close follow camera,
   minimal HUD, team hubs, and skin-based human minimap markers.
-- Netcode for GameObjects / Unity Transport / Relay join-code adapter plus direct
-  LAN adapter, both with device-host authority and input-only guest commands.
-- Compressed 10 Hz snapshots,
+- Netcode for GameObjects / Unity Transport, password-protected automatic
+  partner discovery through Unity Lobby, Relay fallback codes, and a direct LAN
+  adapter, all with device-host authority and input-only guest commands.
+- Lightweight 20 Hz movement updates plus compressed 5 Hz world snapshots,
   keepalives, bounded packets/queues, CPU takeover, original-player reconnect.
 - Private human coin pickups, local currency, duplicate-free 25-coin capsule
   unlocks, skin selection, and per-match reward records to avoid replay payouts.
@@ -91,8 +102,9 @@ The suite covers each arena, all team compositions, trail overlap rules,
 respawning, capture/stealing, timer expiry/overtime, full bot simulations,
 snapshot round trips, disconnects, and reconnects.
 
-The Windows player's development test flags are `-paperSmoke`,
-`-paperHostSmoke`, and `-paperClientSmoke`. The visual smoke run cycles through
+The Windows player's development test flags include `-paperSmoke`,
+`-paperHostSmoke`, `-paperClientSmoke`, `-paperPartnerHostSmoke`, and
+`-paperPartnerClientSmoke`. The visual smoke run cycles through
 gameplay and menus, writes PNGs under `Builds/Screenshots`, then exits. Use a
 visible window and `-force-d3d11` on this PC; a hidden/minimized window may
 produce black frames. The network flags exercise two separate game instances
@@ -104,6 +116,7 @@ anonymous test profiles.
 ./Tests/VerifyPlayer.ps1 -Mode Visual
 ./Tests/VerifyPlayer.ps1 -Mode LAN
 ./Tests/VerifyPlayer.ps1 -Mode Relay
+./Tests/VerifyPlayer.ps1 -Mode Partner
 ```
 
 The visual script checks gameplay and five menu screens in desktop, portrait,
@@ -115,13 +128,12 @@ inspection as well; pixel checks alone do not establish correct layout.
 This is a playable foundation, not the finished launch game in the design brief.
 
 - The Relay path uses anonymous Unity Authentication and encrypted DTLS traffic.
-  Client prediction, bandwidth-efficient deltas, adverse-network testing,
+  Bandwidth-efficient territory deltas, adverse-network testing,
   authentication hardening, and reconnect UX polish remain.
 - Arena masks and skins are original procedural blockouts. They need authored
   launch-quality meshes, animation, and art review.
   Some roster members still share much of their construction.
-- Bots need tactical tuning, contested-area awareness, and mobile profiling.
-  They currently use grid paths and simple expansion/attack priorities.
+- Bots still need broader mobile profiling and long-session balance tuning.
 - Audio and capsule feedback are prototypes. Full event coverage, particle
   effects, mix/music, reveal choreography, and accessibility settings remain.
 - IMGUI provides the current responsive menu/HUD. A production mobile UI,

@@ -20,13 +20,17 @@ namespace PaperTrails
         Material floorMaterial,coinMaterial;
         public RenderTexture Map {get;private set;}
         Camera cam,mapCamera;
-        float nextMap;
+        float nextMap,lastNetworkUpdate,arenaScale=1;
         int local;
+        bool networkGuest;
+        Vector2 predictedDirection;
         GridPoint[] surface;
-        public void Bind(GameSimulation simulation,int localId)
+        public void Bind(GameSimulation simulation,int localId,bool guest=false)
         {
             if(root)Destroy(root);if(Map)Destroy(Map);
-            game=simulation;local=localId;root=new GameObject("Match visuals");coins.Clear();
+            game=simulation;local=localId;networkGuest=guest;lastNetworkUpdate=Time.unscaledTime;arenaScale=game.Arena.WorldScale;
+            predictedDirection=new Vector2(game.Players[local].DX,game.Players[local].DZ).normalized;
+            root=new GameObject("Match visuals");coins.Clear();
             floorMaterial=new Material(Shader.Find("PaperTrails/Turf"));coinMaterial=SkinFactory.Material(new Color(1,.8f,.16f),.65f);
             for(int i=0;i<25;i++)
             {var o=new GameObject("Turf chunk "+i);o.layer=9;o.transform.SetParent(root.transform);chunks[i]=o.AddComponent<MeshFilter>();o.AddComponent<MeshRenderer>().sharedMaterial=floorMaterial;}
@@ -41,22 +45,42 @@ namespace PaperTrails
             for(int t=1;t<=2;t++)
             {
                 int hub=game.Arena.Hubs[t-1];var mat=SkinFactory.Material(TeamColor((Team)t));
-                var o=SkinFactory.Part(root.transform,PrimitiveType.Cylinder,Position(hub)+Vector3.up*.12f,new Vector3(5.4f,.13f,5.4f),mat);
+                var o=SkinFactory.Part(root.transform,PrimitiveType.Cylinder,WorldPosition(hub)+Vector3.up*.12f,new Vector3(5.4f,.13f,5.4f),mat);
                 SkinFactory.Part(o.transform,PrimitiveType.Cylinder,new Vector3(0,1.2f,0),new Vector3(.7f,.3f,.7f),SkinFactory.Material(Color.white));
             }
             cam=Camera.main;
             if(!cam){var c=new GameObject("Camera");c.tag="MainCamera";cam=c.AddComponent<Camera>();c.AddComponent<AudioListener>();}
             cam.orthographic=true;cam.orthographicSize=7.5f;cam.nearClipPlane=.1f;cam.farClipPlane=250;
             cam.backgroundColor=new Color(.17f,.59f,.7f);cam.clearFlags=CameraClearFlags.SolidColor;
-            cam.transform.rotation=Quaternion.Euler(58,0,0);cam.transform.position=new Vector3(game.Players[local].X,0,game.Players[local].Z)+new Vector3(0,32,-20);
+            cam.transform.rotation=Quaternion.Euler(58,0,0);cam.transform.position=WorldPosition(game.Players[local].X,game.Players[local].Z)+new Vector3(0,32,-20);
             Map=new RenderTexture(320,320,16,RenderTextureFormat.ARGB32){antiAliasing=4};Map.Create();
-            mapCamera=new GameObject("Minimap camera").AddComponent<Camera>();mapCamera.transform.SetParent(root.transform);mapCamera.enabled=false;mapCamera.orthographic=true;mapCamera.orthographicSize=40;mapCamera.transform.position=new Vector3(40,100,40);mapCamera.transform.rotation=Quaternion.Euler(90,0,0);mapCamera.clearFlags=CameraClearFlags.SolidColor;mapCamera.backgroundColor=Color.clear;mapCamera.cullingMask=1<<9;mapCamera.targetTexture=Map;
+            mapCamera=new GameObject("Minimap camera").AddComponent<Camera>();mapCamera.transform.SetParent(root.transform);mapCamera.enabled=false;mapCamera.orthographic=true;mapCamera.orthographicSize=40*arenaScale;mapCamera.transform.position=new Vector3(40,100,40);mapCamera.transform.rotation=Quaternion.Euler(90,0,0);mapCamera.clearFlags=CameraClearFlags.SolidColor;mapCamera.backgroundColor=Color.clear;mapCamera.cullingMask=1<<9;mapCamera.targetTexture=Map;
             surface=SmoothGrid.Build(game.Owners);foreach(int c in game.DirtyChunks)Rebuild(c);game.DirtyChunks.Clear();UpdateMap();
         }
-        public static Vector3 Position(int cell)=>new Vector3(cell%Arena.Size+.5f,.15f,cell/Arena.Size+.5f);
+        public void NetworkUpdate()
+        {
+            lastNetworkUpdate=Time.unscaledTime;
+            if(networkGuest)
+            {
+                Player p=game.Players[local];Vector2 authoritative=new Vector2(p.DX,p.DZ);
+                if(authoritative.sqrMagnitude>.01f)predictedDirection=authoritative.normalized;
+            }
+        }
+        public void PredictLocalDirection(float x,float z)
+        {
+            if(networkGuest&&x*x+z*z>.01f)predictedDirection=new Vector2(x,z).normalized;
+        }
+        float World(float value)=>40+(value-40)*arenaScale;
+        Vector3 WorldPosition(float x,float z)=>new Vector3(World(x),0,World(z));
+        Vector3 WorldPosition(int cell)=>new Vector3(World(cell%Arena.Size+.5f),.15f,World(cell/Arena.Size+.5f));
         void LateUpdate()
         {
             if(game==null)return;
+            // Render a short distance ahead of the newest server sample. At a
+            // 20 Hz motion rate consecutive targets nearly meet, eliminating
+            // the guest-only stop/start cadence without moving game authority.
+            float networkAge=networkGuest?Mathf.Clamp(Time.unscaledTime-lastNetworkUpdate,0,.11f):0;
+            float presentationLead=networkGuest?Mathf.Min(.15f,.04f+networkAge):0;
             if(game.DirtyChunks.Count>0)
             {
                 surface=SmoothGrid.Build(game.Owners);
@@ -69,9 +93,10 @@ namespace PaperTrails
                 if(skins[i]!=p.Skin)
                 {if(bodies[i])Destroy(bodies[i]);bodies[i]=SkinFactory.Create(p.Skin,p.Human,TeamColor(p.Team));bodies[i].transform.SetParent(root.transform);bodies[i].transform.position=new Vector3(p.X,0,p.Z);skins[i]=p.Skin;}
                 bodies[i].SetActive(p.Alive);
-                var target=new Vector3(p.X,0,p.Z);
+                float dx=networkGuest&&i==local?predictedDirection.x:p.DX,dz=networkGuest&&i==local?predictedDirection.y:p.DZ;
+                var target=WorldPosition(p.X,p.Z)+new Vector3(dx,0,dz)*GameSimulation.Speed*presentationLead;
                 bodies[i].transform.position=Vector3.Distance(bodies[i].transform.position,target)>8?target:Vector3.Lerp(bodies[i].transform.position,target,1-Mathf.Exp(-18*Time.deltaTime));
-                if(p.DX*p.DX+p.DZ*p.DZ>.01f)bodies[i].transform.rotation=Quaternion.Slerp(bodies[i].transform.rotation,Quaternion.LookRotation(new Vector3(p.DX,0,p.DZ)),Time.deltaTime*15);
+                if(dx*dx+dz*dz>.01f)bodies[i].transform.rotation=Quaternion.Slerp(bodies[i].transform.rotation,Quaternion.LookRotation(new Vector3(dx,0,dz)),Time.deltaTime*15);
                 DrawTrail(p,trails[i],bodies[i].transform.position);
             }
             var focus=bodies[local].transform.position;
@@ -80,7 +105,7 @@ namespace PaperTrails
             var list=game.Coins[local];
             while(coins.Count<list.Count)coins.Add(SkinFactory.Part(root.transform,PrimitiveType.Sphere,Vector3.zero,new Vector3(.5f,.65f,.18f),coinMaterial));
             for(int i=0;i<coins.Count;i++)
-            {coins[i].SetActive(i<list.Count);if(i<list.Count){coins[i].transform.position=Position(list[i])+Vector3.up*(.6f+Mathf.Sin(Time.time*3+i)*.13f);coins[i].transform.rotation=Quaternion.Euler(0,Time.time*100,0);}}
+            {coins[i].SetActive(i<list.Count);if(i<list.Count){coins[i].transform.position=WorldPosition(list[i])+Vector3.up*(.6f+Mathf.Sin(Time.time*3+i)*.13f);coins[i].transform.rotation=Quaternion.Euler(0,Time.time*100,0);}}
             if(Time.unscaledTime>=nextMap){nextMap=Time.unscaledTime+.1f;UpdateMap();}
         }
         void UpdateMap()
@@ -96,10 +121,10 @@ namespace PaperTrails
             float best=float.MaxValue;
             for(int i=p.TrailPath.Count-1;i>=Mathf.Max(0,p.TrailPath.Count-12);i--)
             {
-                GridPoint point=p.TrailPath[i];float d=(head-new Vector3(point.X,.19f,point.Z)).sqrMagnitude;
+                GridPoint point=p.TrailPath[i];Vector3 world=WorldPosition(point.X,point.Z);world.y=.19f;float d=(head-world).sqrMagnitude;
                 if(d<best){best=d;end=i;}
             }
-            for(int i=0;i<=end;i++)trailPoints.Add(new Vector3(p.TrailPath[i].X,.19f,p.TrailPath[i].Z));
+            for(int i=0;i<=end;i++){Vector3 point=WorldPosition(p.TrailPath[i].X,p.TrailPath[i].Z);point.y=.19f;trailPoints.Add(point);}
             trailPoints.Add(head);
             if(trailPoints.Count==2){ribbon.Add(trailPoints[0]);ribbon.Add(trailPoints[1]);}
             else
@@ -138,7 +163,7 @@ namespace PaperTrails
             if(chunks[chunk].sharedMesh)Destroy(chunks[chunk].sharedMesh);
             var mesh=new Mesh();mesh.SetVertices(v);mesh.SetColors(colors);mesh.SetTriangles(triangles,0);mesh.RecalculateNormals();mesh.RecalculateBounds();chunks[chunk].sharedMesh=mesh;
         }
-        Vector3 Vertex(int x,int z){GridPoint p=surface[z*SmoothGrid.Width+x];return new Vector3(p.X,0,p.Z);}
+        Vector3 Vertex(int x,int z){GridPoint p=surface[z*SmoothGrid.Width+x];return WorldPosition(p.X,p.Z);}
         static void Quad(Vector3 a,Vector3 b,Vector3 c,Vector3 d,Color color,List<Vector3> v,List<Color> colors,List<int> t)
         {int n=v.Count;v.Add(a);v.Add(b);v.Add(c);v.Add(d);for(int i=0;i<4;i++)colors.Add(color);t.Add(n);t.Add(n+1);t.Add(n+2);t.Add(n);t.Add(n+2);t.Add(n+3);}
     }

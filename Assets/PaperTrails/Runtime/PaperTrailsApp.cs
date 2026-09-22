@@ -21,23 +21,25 @@ namespace PaperTrails
         IGameSession network;
         bool online=true;
         string joinCode="";
-        bool hosting,practice,remoteReady,ready,wasConnected,banked,authorized,smokeHost,codeWritten,recoveryCopied,reconnecting,lastOnline=true;
+        bool hosting,practice,remoteReady,ready,wasConnected,banked,authorized,smokeHost,codeWritten,recoveryCopied,reconnecting,lastOnline=true,partnerJoin,showManualJoin,collectionFromLobby;
         int snapshots;
         Team team=Team.Red,remoteTeam=Team.Blue;
+        BotDifficulty cpuDifficulty=BotDifficulty.Medium;
         int skin,remoteSkin,vote,remoteVote,wallet,localId,selectedArena,sendSeq;
         readonly SnapshotChunks.Assembler snapshotAsm=new SnapshotChunks.Assembler();
-        float accumulator,sendTimer,finishSend,rouletteStart,nextClick,duration=300,unlockTime=-10,nextHeartbeat,reconnectUntil,lastRxTime;
+        float accumulator,sendTimer,stateSendTimer,finishSend,rouletteStart,nextClick,duration=300,unlockTime=-10,nextHeartbeat,reconnectUntil,lastRxTime,nextInputSend,nextInputHeartbeat;
         int lastSecond=-1,spinStep,spinTotal;
         int[] votes;
         string address="192.168.1.10",status="",remoteToken="",token,reveal="",recoveryCode="",restoreCode="",playerName="Player",remoteName="Player 2",lastCode="",lastAddress="",pendingLink=null;
         readonly HashSet<int> unlocked=new HashSet<int>();
         readonly List<Texture2D> previews=new List<Texture2D>();
         Vector2 touchAnchor,gestureDirection,collectionScroll,lobbyScroll,rouletteScroll,voteScroll;
+        Vector2 lastSentDirection=new Vector2(float.NaN,float.NaN);
         bool touchActive;
         GUIStyle title,label,small,button,heading,btnRed,btnGreen,btnBlue,btnGray,btnOff,chip,billboard,sliderBack,sliderKnob,panelS,cardS,chipS;
         float uiWidth,uiHeight,uiScale=1,suppressClickUntil;
-        float countdownEnd=-10;int lastCount;bool rouletteLocked;
-        const int Cost=20;
+        float countdownEnd=-10;int lastCount,lastStateSeq,lastMotionSeq;bool rouletteLocked;
+        const int Cost=20,VoteCount=10;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Boot(){if(!FindAnyObjectByType<PaperTrailsApp>())new GameObject("PaperTrails").AddComponent<PaperTrailsApp>();}
@@ -49,6 +51,7 @@ namespace PaperTrails
             view=gameObject.AddComponent<GameView>();sound=gameObject.AddComponent<SoundBank>();studio=gameObject.AddComponent<PreviewStudio>();
             var light=new GameObject("Sun").AddComponent<Light>();light.type=LightType.Directional;light.intensity=1.15f;light.transform.rotation=Quaternion.Euler(55,-35,0);RenderSettings.ambientLight=new Color(.7f,.75f,.8f);
             wallet=PlayerPrefs.GetInt("coins",0);skin=PlayerPrefs.GetInt("skin",0);token=PlayerPrefs.GetString("token",Guid.NewGuid().ToString());PlayerPrefs.SetString("token",token);
+            cpuDifficulty=(BotDifficulty)Mathf.Clamp(PlayerPrefs.GetInt("cpuDifficulty",(int)BotDifficulty.Medium),0,2);
             playerName=NormalizeName(PlayerPrefs.GetString("playerName","Player"),"Player");
             unlocked.Add(0);foreach(string s in PlayerPrefs.GetString("unlocked","0").Split(','))if(int.TryParse(s,out int id)&&id>=0&&id<SkinFactory.Names.Length)unlocked.Add(id);
             if(!unlocked.Contains(skin))skin=0;
@@ -67,6 +70,8 @@ namespace PaperTrails
             if(Array.IndexOf(args,"-paperRelayHostSmoke")>=0){online=true;StartLobby(true,false);ready=true;smokeHost=true;Invoke(nameof(NetworkSmokeExit),55);}
             int relayJoin=Array.IndexOf(args,"-paperRelayClientSmoke");
             if(relayJoin>=0&&relayJoin+1<args.Length){online=true;joinCode=args[relayJoin+1];StartLobby(false,false);ready=true;Invoke(nameof(NetworkSmokeExit),30);}
+            if(Array.IndexOf(args,"-paperPartnerHostSmoke")>=0){online=true;StartLobby(true,false);ready=true;smokeHost=true;Invoke(nameof(NetworkSmokeExit),70);}
+            if(Array.IndexOf(args,"-paperPartnerClientSmoke")>=0){online=true;StartLobby(false,false,true);ready=true;Invoke(nameof(NetworkSmokeExit),50);}
             Application.deepLinkActivated+=OnDeepLink;
             if(!string.IsNullOrEmpty(Application.absoluteURL))pendingLink=Application.absoluteURL;
         }
@@ -89,7 +94,8 @@ namespace PaperTrails
             yield return new WaitForSeconds(.5f);
             foreach(ScreenMode mode in new[]{ScreenMode.Menu,ScreenMode.Lobby,ScreenMode.Collection,ScreenMode.Roulette,ScreenMode.Results})
             {
-                if(mode==ScreenMode.Roulette){votes=new int[ArenaCount];for(int vi=0;vi<ArenaCount;vi++)votes[vi]=vi;rouletteStart=Time.time;}
+                collectionFromLobby=mode==ScreenMode.Collection;
+                if(mode==ScreenMode.Roulette){votes=new int[VoteCount];for(int vi=0;vi<VoteCount;vi++)votes[vi]=vi%ArenaCount;rouletteStart=Time.time;}
                 if(mode==ScreenMode.Results){game.Winner=Team.Red;}
                 screen=mode;yield return new WaitForSeconds(.6f);yield return CaptureFrame(System.IO.Path.Combine(path,mode.ToString()+".png"));yield return new WaitForSeconds(.4f);
             }
@@ -106,7 +112,7 @@ namespace PaperTrails
         void Update()
         {
             if(screen==ScreenMode.Menu&&!string.IsNullOrEmpty(pendingLink)){string url=pendingLink;pendingLink=null;HandleLink(url);}
-            if(reconnecting&&Time.unscaledTime>=reconnectUntil){reconnecting=false;network?.Dispose();network=null;if(screen==ScreenMode.Match)screen=ScreenMode.Lobby;status="Could not reconnect. Rejoin with the code or link.";}
+            if(reconnecting&&Time.unscaledTime>=reconnectUntil){reconnecting=false;network?.Dispose();network=null;if(screen==ScreenMode.Match)screen=ScreenMode.Lobby;status="Could not reconnect. Try Join Partner again.";}
             if(!hosting&&screen==ScreenMode.Match&&!reconnecting&&network!=null&&network.Connected&&Time.unscaledTime-lastRxTime>5f){Bank();BeginReconnect();}
             PollNetwork();
             if(screen!=ScreenMode.Match&&Input.touchCount>0)
@@ -154,7 +160,8 @@ namespace PaperTrails
                 game.Players[1].Connected=!practice && authorized && network!=null&&network.Connected;
                 if(!frozen){accumulator=Mathf.Min(accumulator+Time.deltaTime,.25f);while(accumulator>=GameSimulation.Tick){game.Step(GameSimulation.Tick);accumulator-=GameSimulation.Tick;}}
                 else accumulator=0;
-                sendTimer-=Time.deltaTime;if(sendTimer<=0){sendTimer=.1f;SendUnreliable(Packet.Snapshot(game));}
+                sendTimer-=Time.deltaTime;if(sendTimer<=0){sendTimer+=.05f;SendUnreliable(Packet.Motion(game));}
+                stateSendTimer-=Time.deltaTime;if(stateSendTimer<=0){stateSendTimer+=.2f;SendUnreliable(Packet.Snapshot(game));}
             }
             if(game.Phase==MatchPhase.Finished){if(hosting&&screen==ScreenMode.Match)finishSend=2f;Bank();screen=ScreenMode.Results;}
         }
@@ -189,7 +196,17 @@ namespace PaperTrails
                 dir=gestureDirection.sqrMagnitude>.5f?gestureDirection:keys;
             }
             if(dir.sqrMagnitude<.5f)return;
-            dir.Normalize();if(hosting)game.SetDirection(0,dir.x,dir.y);else SendUnreliable(new Packet{type="input",x=dir.x,z=dir.y});
+            dir.Normalize();if(hosting)game.SetDirection(0,dir.x,dir.y);else
+            {
+                view.PredictLocalDirection(dir.x,dir.y);
+                float now=Time.unscaledTime;
+                bool changed=float.IsNaN(lastSentDirection.x)||(lastSentDirection-dir).sqrMagnitude>.0025f;
+                if((changed&&now>=nextInputSend)||now>=nextInputHeartbeat)
+                {
+                    SendUnreliable(new Packet{type="input",x=dir.x,z=dir.y});lastSentDirection=dir;
+                    nextInputSend=now+.04f;nextInputHeartbeat=now+.2f;
+                }
+            }
         }
         void Send(Packet p){if(network!=null&&network.Connected)network.Send(PacketCodec.Encode(JsonUtility.ToJson(p)));}
         void SendUnreliable(Packet p)
@@ -197,7 +214,8 @@ namespace PaperTrails
             if(network==null||!network.Connected)return;
             p.seq=++sendSeq;
             string raw=PacketCodec.Encode(JsonUtility.ToJson(p));
-            if(raw.Length<=SnapshotChunks.MaxPiece){network.SendUnreliable(raw);return;}
+            int directLimit=p.type=="motion"?SnapshotChunks.MaxDirect:SnapshotChunks.MaxPiece;
+            if(raw.Length<=directLimit){network.SendUnreliable(raw);return;}
             foreach(string chunk in SnapshotChunks.Split(sendSeq,raw))network.SendUnreliable(chunk);
         }
         void PollNetwork()
@@ -231,14 +249,15 @@ namespace PaperTrails
                             if(screen==ScreenMode.Match||screen==ScreenMode.Results){SendUnreliable(Packet.Snapshot(game));continue;}
                         }
                         if(!authorized)continue;
-                        if((p.type=="hello"||p.type=="lobby")&&screen==ScreenMode.Lobby)
+                        if((p.type=="hello"||p.type=="lobby")&&(screen==ScreenMode.Lobby||(screen==ScreenMode.Collection&&collectionFromLobby)))
                         {remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=Mathf.Clamp(p.skin,0,SkinFactory.Names.Length-1);remoteVote=Mathf.Clamp(p.vote,0,ArenaCount-1);remoteReady=p.ready;SendLobby();}
                         if(p.type=="input"&&screen==ScreenMode.Match)game.SetDirection(1,p.x,p.z);
                     }
                     else
                     {
-                        if(p.type=="lobby") {reconnecting=false;if(screen==ScreenMode.Match)Bank();remoteName=NormalizeName(p.name,"Player");remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=p.skin;remoteVote=p.vote;remoteReady=p.ready;duration=p.duration;if(screen!=ScreenMode.Lobby)screen=ScreenMode.Lobby;}
-                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==ArenaCount){reconnecting=false;if(screen==ScreenMode.Match)Bank();votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;spinStep=0;spinTotal=2*ArenaCount+Math.Max(0,Array.IndexOf(votes,selectedArena));nextClick=rouletteStart;rouletteLocked=false;screen=ScreenMode.Roulette;}
+                        if(p.type=="lobby") {reconnecting=false;if(screen==ScreenMode.Match)Bank();remoteName=NormalizeName(p.name,"Player");remoteTeam=(Team)Mathf.Clamp(p.team,1,2);remoteSkin=p.skin;remoteVote=p.vote;remoteReady=p.ready;duration=p.duration;cpuDifficulty=(BotDifficulty)Mathf.Clamp(p.difficulty,0,2);if(screen!=ScreenMode.Lobby&&!(screen==ScreenMode.Collection&&collectionFromLobby))screen=ScreenMode.Lobby;}
+                        if(p.type=="roulette"&&p.votes!=null&&p.votes.Length==VoteCount){reconnecting=false;if(screen==ScreenMode.Match)Bank();votes=p.votes;selectedArena=p.arena;rouletteStart=Time.time;spinStep=0;spinTotal=2*VoteCount+Math.Max(0,Array.IndexOf(votes,selectedArena));nextClick=rouletteStart;rouletteLocked=false;screen=ScreenMode.Roulette;}
+                        if(p.type=="motion")ApplyMotion(p);
                         if(p.type=="state")ApplySnapshot(p);
                         if(p.type=="error")status=p.message;
                     }
@@ -246,13 +265,28 @@ namespace PaperTrails
                 catch(Exception e){status="Network data rejected: "+e.GetType().Name;}
             }
         }
+        void ApplyMotion(Packet p)
+        {
+            if(p.seq<=lastMotionSeq||p.motion==null||p.motion.Length!=70||game==null||p.matchId!=game.MatchId||screen!=ScreenMode.Match)return;
+            lastMotionSeq=p.seq;lastRxTime=Time.unscaledTime;
+            bool wasAlive=game.Players[localId].Alive;
+            for(int i=0;i<10;i++)
+            {
+                Player q=game.Players[i];int n=i*7,flags=(int)p.motion[n+6];
+                q.X=p.motion[n];q.Z=p.motion[n+1];q.DX=p.motion[n+2];q.DZ=p.motion[n+3];q.Respawn=p.motion[n+4];q.Cell=(int)p.motion[n+5];q.Alive=(flags&1)!=0;q.Connected=(flags&2)!=0;
+            }
+            if(game.Players[localId].Alive!=wasAlive)sound.Play(game.Players[localId].Alive?"respawn":"death");
+            game.Remaining=p.remaining;view.NetworkUpdate();
+        }
         void ApplySnapshot(Packet p)
         {
-            if(p.players==null||p.players.Length!=10||p.arena<0||p.arena>=ArenaCount)return;
+            if(p.seq<=lastStateSeq||p.players==null||p.players.Length!=10||p.arena<0||p.arena>=ArenaCount)return;
+            lastStateSeq=p.seq;
             byte[] bytes=Convert.FromBase64String(p.owners);if(bytes.Length!=Arena.Size*Arena.Size)return;
             snapshots++;reconnecting=false;lastRxTime=Time.unscaledTime;
             bool fresh=screen!=ScreenMode.Match&&screen!=ScreenMode.Results || (int)game.Arena.Kind!=p.arena;
-            if(fresh){if(game!=null)Bank();game=new GameSimulation((ArenaKind)p.arena,(Team)p.players[0].team,(Team)p.players[1].team);banked=false;}
+            bool preserveNewerMotion=!fresh&&p.seq<lastMotionSeq;
+            if(fresh){if(game!=null)Bank();cpuDifficulty=(BotDifficulty)Mathf.Clamp(p.difficulty,0,2);game=new GameSimulation((ArenaKind)p.arena,(Team)p.players[0].team,(Team)p.players[1].team,12345,300,-1,-1,cpuDifficulty);banked=false;}
             game.MatchId=p.matchId;
             for(int i=0;i<bytes.Length;i++)if(game.Owners[i]!=(Team)bytes[i]){game.Owners[i]=(Team)bytes[i];game.DirtyChunks.Add((i%Arena.Size)/16+(i/Arena.Size/16)*5);}
             if(!fresh)
@@ -261,15 +295,26 @@ namespace PaperTrails
                 if(incoming.coins>old.Coins)sound.Play("coin");
                 if(incoming.captured>old.Captured)sound.Play("capture",incoming.captured-old.Captured);
                 if(incoming.cuts>old.Cuts)sound.Play("cut");
-                if(incoming.alive!=old.Alive)sound.Play(incoming.alive?"respawn":"death");
+                if(!preserveNewerMotion&&incoming.alive!=old.Alive)sound.Play(incoming.alive?"respawn":"death");
                 if(p.phase!=(int)game.Phase)sound.Play(p.phase==(int)MatchPhase.Overtime?"overtime":"finish");
             }
-            for(int i=0;i<10;i++)p.players[i].Apply(game.Players[i]);
+            for(int i=0;i<10;i++)p.players[i].Apply(game.Players[i],!preserveNewerMotion);
             game.Remaining=p.remaining;game.Phase=(MatchPhase)p.phase;game.Winner=(Team)p.winner;game.RedCount=p.red;game.BlueCount=p.blue;
             game.Coins[0].Clear();game.Coins[1].Clear();if(p.coins0!=null)game.Coins[0].AddRange(p.coins0);if(p.coins1!=null)game.Coins[1].AddRange(p.coins1);
-            if(fresh)view.Bind(game,1);bool wasMatch=screen==ScreenMode.Match;screen=game.Phase==MatchPhase.Finished?ScreenMode.Results:ScreenMode.Match;if(!wasMatch&&screen==ScreenMode.Match){countdownEnd=Time.unscaledTime+3;lastCount=4;}if(screen==ScreenMode.Results)Bank();
+            if(fresh)view.Bind(game,1,true);else view.NetworkUpdate();bool wasMatch=screen==ScreenMode.Match;screen=game.Phase==MatchPhase.Finished?ScreenMode.Results:ScreenMode.Match;if(!wasMatch&&screen==ScreenMode.Match){countdownEnd=Time.unscaledTime+3;lastCount=4;}if(screen==ScreenMode.Results)Bank();
         }
-        void SendLobby(){Send(new Packet{type="lobby",name=playerName,team=(int)team,skin=skin,vote=vote,ready=ready,duration=duration});}
+        void SendLobby(){Send(new Packet{type="lobby",name=playerName,team=(int)team,skin=skin,vote=vote,ready=ready,duration=duration,difficulty=(int)cpuDifficulty});}
+        void OpenCollection(bool fromLobby)
+        {
+            collectionFromLobby=fromLobby;collectionScroll=Vector2.zero;screen=ScreenMode.Collection;
+            if(fromLobby){ready=false;SendLobby();}
+        }
+        void CloseCollection()
+        {
+            bool returnToLobby=collectionFromLobby;collectionFromLobby=false;
+            screen=returnToLobby?ScreenMode.Lobby:ScreenMode.Menu;
+            if(returnToLobby)SendLobby();
+        }
         void BeginReconnect()
         {
             if(reconnecting)return;
@@ -278,7 +323,7 @@ namespace PaperTrails
             try
             {
                 network?.Dispose();network=NewSession();
-                if(lastOnline)network.Join(lastCode);else network.Join(lastAddress);
+                if(lastOnline&&partnerJoin)network.JoinPartner();else if(lastOnline)network.Join(lastCode);else network.Join(lastAddress);
             }
             catch(Exception){ }
             wasConnected=false;
@@ -289,7 +334,7 @@ namespace PaperTrails
             if(!JoinLink.TryParse(url,out bool linkOnline,out string target)){status="That join link did not work. Ask the host for a fresh one.";return;}
             online=linkOnline;
             if(online)joinCode=target;else address=target;
-            StartLobby(false,false);
+            StartLobby(false,false,false);
         }
         void ShareJoinLink()
         {
@@ -299,26 +344,31 @@ namespace PaperTrails
             if(string.IsNullOrEmpty(link)){status="Still starting the host connection. Try again in a moment.";return;}
             GUIUtility.systemCopyBuffer=link;status="Join link copied. Send it to your partner.";
         }
-        void StartLobby(bool host,bool offline)
+        void StartLobby(bool host,bool offline,bool discoverPartner=false)
         {
-            network?.Dispose();network=null;wasConnected=false;hosting=host;practice=offline;localId=host?0:1;ready=false;remoteReady=false;remoteToken="";remoteName=offline?"CPU 1":host?"Player 2":"Player";status="";screen=ScreenMode.Lobby;reconnecting=false;
+            network?.Dispose();network=null;wasConnected=false;hosting=host;practice=offline;partnerJoin=!host&&!offline&&online&&discoverPartner;localId=host?0:1;ready=false;remoteReady=false;remoteToken="";remoteName=offline?"CPU 1":host?"Player 2":"Player";status="";screen=ScreenMode.Lobby;reconnecting=false;
             if(!host){lastOnline=online;lastCode=joinCode;lastAddress=address;}
             if(offline){remoteReady=true;return;}
-            network=NewSession();try{if(host)network.Host();else network.Join(online?joinCode:address);}catch(Exception e){status=e.Message;}
+            network=NewSession();try{if(host)network.Host();else if(partnerJoin)network.JoinPartner();else network.Join(online?joinCode:address);}catch(Exception e){status=e.Message;}
+        }
+        void ReconnectSession()
+        {
+            network?.Dispose();network=NewSession();
+            if(online&&partnerJoin)network.JoinPartner();else network.Join(online?joinCode:address);wasConnected=false;
         }
         void Roulette()
         {
-            votes=new int[ArenaCount];votes[0]=vote;votes[1]=practice?UnityEngine.Random.Range(0,ArenaCount):remoteVote;
-            for(int i=2;i<ArenaCount;i++)votes[i]=UnityEngine.Random.Range(0,ArenaCount);
-            selectedArena=votes[UnityEngine.Random.Range(0,ArenaCount)];rouletteStart=Time.time;spinStep=0;spinTotal=2*ArenaCount+Math.Max(0,Array.IndexOf(votes,selectedArena));nextClick=rouletteStart;rouletteLocked=false;screen=ScreenMode.Roulette;
+            votes=new int[VoteCount];votes[0]=vote;votes[1]=practice?UnityEngine.Random.Range(0,ArenaCount):remoteVote;
+            for(int i=2;i<VoteCount;i++)votes[i]=UnityEngine.Random.Range(0,ArenaCount);
+            selectedArena=votes[UnityEngine.Random.Range(0,VoteCount)];rouletteStart=Time.time;spinStep=0;spinTotal=2*VoteCount+Math.Max(0,Array.IndexOf(votes,selectedArena));nextClick=rouletteStart;rouletteLocked=false;screen=ScreenMode.Roulette;
             Send(new Packet{type="roulette",votes=votes,arena=selectedArena});
         }
         void StartMatch(int arena)
         {
-            game=new GameSimulation((ArenaKind)arena,team,remoteTeam,Environment.TickCount,duration);game.Players[0].Skin=skin;game.Players[1].Skin=remoteSkin;
+            game=new GameSimulation((ArenaKind)arena,team,remoteTeam,Environment.TickCount,duration,-1,-1,cpuDifficulty,!practice);game.Players[0].Skin=skin;game.Players[1].Skin=remoteSkin;
             game.Players[0].Name=hosting?playerName:remoteName;game.Players[1].Name=hosting?(practice?"CPU 1":remoteName):playerName;
             game.Event=(key,id,amount)=>{if(id==localId||key=="finish"||key=="overtime")sound.Play(key,amount);};
-            view.Bind(game,localId);banked=false;accumulator=0;countdownEnd=Time.unscaledTime+3;lastCount=4;screen=ScreenMode.Match;SendUnreliable(Packet.Snapshot(game));
+            view.Bind(game,localId,false);banked=false;accumulator=0;sendTimer=stateSendTimer=0;countdownEnd=Time.unscaledTime+3;lastCount=4;screen=ScreenMode.Match;SendUnreliable(Packet.Snapshot(game));
         }
         void Bank()
         {
@@ -326,7 +376,7 @@ namespace PaperTrails
             string key="reward."+game.MatchId;int paid=PlayerPrefs.GetInt(key,0),earned=game.Players[localId].Coins;
             wallet+=Mathf.Max(0,earned-paid);PlayerPrefs.SetInt(key,Mathf.Max(paid,earned));banked=true;Save();
         }
-        void Save(){PlayerPrefs.SetInt("coins",wallet);PlayerPrefs.SetInt("skin",skin);PlayerPrefs.SetString("unlocked",string.Join(",",unlocked));PlayerPrefs.SetString("playerName",playerName);PlayerPrefs.Save();recoveryCode=CreateRecoveryCode();}
+        void Save(){PlayerPrefs.SetInt("coins",wallet);PlayerPrefs.SetInt("skin",skin);PlayerPrefs.SetInt("cpuDifficulty",(int)cpuDifficulty);PlayerPrefs.SetString("unlocked",string.Join(",",unlocked));PlayerPrefs.SetString("playerName",playerName);PlayerPrefs.Save();recoveryCode=CreateRecoveryCode();}
         static string NormalizeName(string value,string fallback)
         {
             string result=(value??"").Trim();if(result.Length>16)result=result.Substring(0,16);return string.IsNullOrEmpty(result)?fallback:result;
@@ -437,7 +487,14 @@ namespace PaperTrails
         }
         void ThemedMinutes(Rect r)
         {
-            duration=Mathf.Round(GUI.HorizontalSlider(r,duration,60,600,sliderBack,sliderKnob)/60)*60;
+            float next=Mathf.Round(GUI.HorizontalSlider(r,duration,60,600,sliderBack,sliderKnob)/60)*60;
+            if(Mathf.Abs(next-duration)>.1f){duration=next;ready=false;SendLobby();}
+        }
+        static string DifficultyName(BotDifficulty value)=>value==BotDifficulty.Easy?"Easy":value==BotDifficulty.Hard?"Hard":"Medium";
+        void ThemedDifficulty(Rect r)
+        {
+            BotDifficulty next=(BotDifficulty)Mathf.RoundToInt(GUI.HorizontalSlider(r,(int)cpuDifficulty,0,2,sliderBack,sliderKnob));
+            if(next!=cpuDifficulty){cpuDifficulty=next;ready=false;Save();SendLobby();}
         }
         void OnGUI()
         {
@@ -460,14 +517,29 @@ namespace PaperTrails
                     if(TBtn(new Rect(x,y0+76,bw/2-4,40),online?"Online ✓":"Online",online?UiTheme.BtnBlue:UiTheme.BtnGray))online=true;
                     if(TBtn(new Rect(x+bw/2+4,y0+76,bw/2-4,40),online?"LAN":"LAN ✓",!online?UiTheme.BtnBlue:UiTheme.BtnGray))online=false;
                     float my=y0+(nm?116:122);
-                    if(TBtn(new Rect(x,my,bw,bh),"Host game",UiTheme.BtnGreen))StartLobby(true,false);my+=bh+8;
-                    float joinH=26+42+6+bh;
-                    Panel(new Rect(x-10,my-6,bw+20,joinH+12));
-                    GUI.Label(new Rect(x,my,bw,26),online?"Join code":"Host IP address",small);
-                    if(online)joinCode=GUI.TextField(new Rect(x,my+28,bw,42),joinCode).ToUpperInvariant();else address=GUI.TextField(new Rect(x,my+28,bw,42),address);
-                    if(TBtn(new Rect(x,my+76,bw,bh),"Join game",UiTheme.BtnBlue))StartLobby(false,false);my+=joinH+12;
+                    if(online)
+                    {
+                        if(TBtn(new Rect(x,my,bw,bh),"Host for Partner",UiTheme.BtnGreen))StartLobby(true,false);my+=bh+8;
+                        if(TBtn(new Rect(x,my,bw,bh),"Join Partner",UiTheme.BtnBlue))StartLobby(false,false,true);my+=bh+8;
+                        if(TBtn(new Rect(x,my,bw,38),showManualJoin?"Hide backup join":"Use a join code instead",UiTheme.BtnGray))showManualJoin=!showManualJoin;my+=46;
+                        if(showManualJoin)
+                        {
+                            Panel(new Rect(x-10,my-6,bw+20,82));
+                            joinCode=GUI.TextField(new Rect(x,my,bw*.62f-4,42),joinCode).ToUpperInvariant();
+                            if(TBtn(new Rect(x+bw*.62f+4,my,bw*.38f-4,42),"Join code",UiTheme.BtnBlue))StartLobby(false,false,false);my+=88;
+                        }
+                    }
+                    else
+                    {
+                        if(TBtn(new Rect(x,my,bw,bh),"Host game",UiTheme.BtnGreen))StartLobby(true,false);my+=bh+8;
+                        float joinH=26+42+6+bh;
+                        Panel(new Rect(x-10,my-6,bw+20,joinH+12));
+                        GUI.Label(new Rect(x,my,bw,26),"Host IP address",small);
+                        address=GUI.TextField(new Rect(x,my+28,bw,42),address);
+                        if(TBtn(new Rect(x,my+76,bw,bh),"Join game",UiTheme.BtnBlue))StartLobby(false,false);my+=joinH+12;
+                    }
                     if(TBtn(new Rect(x,my,bw,bh),"Practice with CPUs",UiTheme.BtnRed))StartLobby(true,true);my+=bh+8;
-                    if(TBtn(new Rect(x,my,bw,bh),"Collection  /  "+wallet+" coins",UiTheme.BtnGray))screen=ScreenMode.Collection;
+                    if(TBtn(new Rect(x,my,bw,bh),"Collection  /  "+wallet+" coins",UiTheme.BtnGray))OpenCollection(false);
                     GUI.Label(new Rect(x,uiHeight-50,w,32),online?"Online multiplayer":"LAN  /  "+LocalAddress(),small);break;
                 }
                 case ScreenMode.Lobby: LobbyUI(x,w);break;
@@ -479,12 +551,12 @@ namespace PaperTrails
                     GUI.Label(new Rect(x,ry,w,40),"Arena roulette",heading);
                     float rt=Time.time-rouletteStart;
                     bool locked=rt>=3;
-                    int index=spinStep%ArenaCount;
+                    int index=spinStep%votes.Length;
                     Chip(new Rect(x+(w-360)/2,ry+44,360,32),rt>=3?ArenaName(selectedArena)+"  •  Starting…":"Spinning… good luck!");
-                    int cols=narrowR?6:11;float cellH=narrowR?100:118;float gy=ry+86;float cw=w/cols;
+                    int cols=narrowR?5:10;float cellH=narrowR?100:118;float gy=ry+86;float cw=w/cols;
                     float pulse=rt>=3?.5f+.3f*Mathf.Sin(Time.time*12):0;
                     string nm0=hosting?playerName:remoteName,nm1=hosting?remoteName:playerName;
-                    for(int i=0;i<ArenaCount;i++)
+                    for(int i=0;i<votes.Length;i++)
                     {
                         Rect r=new Rect(x+(i%cols)*cw,gy+(i/cols)*cellH,cw-6,cellH-6);
                         Card(r);
@@ -523,17 +595,20 @@ namespace PaperTrails
         {
             if(w<600){PortraitLobby(x,w);return;}
             float y=Header(x,w);
-            y+=CenterShift(y,521,30);
-            GUI.Label(new Rect(x,y,w,34),practice?"Practice lobby":hosting?"Host  /  "+SessionAddress():"Guest  /  "+(online?joinCode:address),heading);y+=36;
-            GUI.Label(new Rect(x,y,w,30),status!=""?status:practice?"Second human slot uses CPU control":network?.Status,small);y+=34;
+            y+=CenterShift(y,551,30);
+            GUI.Label(new Rect(x,y,w,34),practice?"Practice lobby":hosting?"Host  /  "+SessionAddress():partnerJoin?"Joining Partner":("Guest  /  "+(online?joinCode:address)),heading);y+=36;
+            GUI.Label(new Rect(x,y,w-150,30),status!=""?status:practice?"Second human slot uses CPU control":network?.Status,small);Chip(new Rect(x+w-140,y,140,28),wallet+" coins");y+=34;
             if(TBtn(new Rect(x,y,w*.23f,50),team==Team.Red?"Red  ✓":"Red",UiTheme.BtnRed)){team=Team.Red;ready=false;SendLobby();}
             if(TBtn(new Rect(x+w*.25f,y,w*.23f,50),team==Team.Blue?"Blue  ✓":"Blue",UiTheme.BtnBlue)){team=Team.Blue;ready=false;SendLobby();}
             int red=(team==Team.Red?1:0)+(remoteTeam==Team.Red?1:0);
             Chip(new Rect(x+w*.52f,y-4,w*.48f,58),$"Red {red} human + {5-red} CPU   •   Blue {2-red} human + {3+red} CPU");
             y+=58;
             SkinRow(x,y,w*.48f);
-            if(hosting){GUI.Label(new Rect(x+w*.52f,y,w*.52f,26),"Match length: "+(duration/60).ToString("0")+" minutes",small);ThemedMinutes(new Rect(x+w*.52f,y+24,w*.44f,22));}
-            y+=54;
+            GUI.Label(new Rect(x+w*.52f,y,w*.52f,26),"Match length: "+(duration/60).ToString("0")+" minutes",small);
+            if(hosting)ThemedMinutes(new Rect(x+w*.52f,y+22,w*.44f,20));
+            GUI.Label(new Rect(x+w*.52f,y+44,w*.52f,24),"CPU difficulty: "+DifficultyName(cpuDifficulty),small);
+            if(hosting)ThemedDifficulty(new Rect(x+w*.76f,y+45,w*.20f,18));
+            y+=84;
             GUI.Label(new Rect(x,y,w*.5f,30),"Your arena vote",label);
             Chip(new Rect(x+w*.62f,y,w*.38f,28),"Pick your favorite arena!");
             y+=30;
@@ -544,16 +619,17 @@ namespace PaperTrails
             GUI.enabled=ready&&(practice||network!=null&&network.Connected&&remoteReady);
             if(hosting&&TBtn(new Rect(x+w*.68f,y,w*.32f,52),"Start match",UiTheme.BtnGreen))Roulette();GUI.enabled=true;
             y+=58;
-            if(TBtn(new Rect(x,y,160,44),"Back",UiTheme.BtnGray)){network?.Dispose();network=null;screen=ScreenMode.Menu;}
-            if(hosting&&!practice&&TBtn(new Rect(x+176,y,230,44),"Share join link",UiTheme.BtnBlue))ShareJoinLink();
-            if(!hosting&&network!=null&&!network.Connected&&TBtn(new Rect(x+176,y,190,44),"Reconnect",UiTheme.BtnBlue)){network.Dispose();network=NewSession();network.Join(online?joinCode:address);wasConnected=false;}
+            if(TBtn(new Rect(x,y,w*.22f,44),"Back",UiTheme.BtnGray)){network?.Dispose();network=null;screen=ScreenMode.Menu;}
+            if(TBtn(new Rect(x+w*.24f,y,w*.34f,44),"Collection  /  "+wallet,UiTheme.BtnGray))OpenCollection(true);
+            if(hosting&&!practice&&TBtn(new Rect(x+w*.60f,y,w*.40f,44),"Share join link",UiTheme.BtnBlue))ShareJoinLink();
+            if(!hosting&&network!=null&&!network.Connected&&TBtn(new Rect(x+w*.60f,y,w*.40f,44),partnerJoin?"Find Partner":"Reconnect",UiTheme.BtnBlue))ReconnectSession();
         }
         void PortraitLobby(float x,float w)
         {
             float y=Header(x,w);
-            y+=CenterShift(y,665,20);
+            y+=CenterShift(y,695,20);
             GUI.Label(new Rect(x,y,w,32),practice?"Practice lobby":hosting?"Host lobby":"Join lobby",heading);y+=34;
-            GUI.Label(new Rect(x,y,w,28),status!=""?status:practice?"Second slot: CPU":hosting?SessionAddress()+" / "+network?.Status:network?.Status,small);y+=30;
+            GUI.Label(new Rect(x,y,w*.64f,28),status!=""?status:practice?"Second slot: CPU":hosting?SessionAddress()+" / "+network?.Status:network?.Status,small);Chip(new Rect(x+w*.66f,y,w*.34f,26),wallet+" coins");y+=30;
             if(TBtn(new Rect(x,y,w/2-5,46),team==Team.Red?"Red ✓":"Red",UiTheme.BtnRed)){team=Team.Red;ready=false;SendLobby();}
             if(TBtn(new Rect(x+w/2+5,y,w/2-5,46),team==Team.Blue?"Blue ✓":"Blue",UiTheme.BtnBlue)){team=Team.Blue;ready=false;SendLobby();}
             y+=52;
@@ -563,6 +639,9 @@ namespace PaperTrails
             y+=58;
             GUI.Label(new Rect(x,y,w*.55f,24),"Match: "+(duration/60).ToString("0")+" minutes",small);
             if(hosting)ThemedMinutes(new Rect(x+w*.55f,y+2,w*.45f,20));
+            y+=28;
+            GUI.Label(new Rect(x,y,w*.55f,24),"CPUs: "+DifficultyName(cpuDifficulty),small);
+            if(hosting)ThemedDifficulty(new Rect(x+w*.55f,y+2,w*.45f,20));
             y+=28;
             GUI.Label(new Rect(x,y,w,28),"Your arena vote",label);y+=30;
             ArenaGrid(x,y,w,6,70,i=>i==vote,null,false,null);
@@ -574,9 +653,10 @@ namespace PaperTrails
             y+=52;
             GUI.Label(new Rect(x,y,w,24),remoteReady?"Partner ready ✓":"Partner not ready",new GUIStyle(small){alignment=TextAnchor.MiddleCenter});
             y+=26;
-            if(TBtn(new Rect(x,y,w*.48f,42),"Back",UiTheme.BtnGray)){network?.Dispose();network=null;screen=ScreenMode.Menu;}
-            if(hosting&&!practice&&TBtn(new Rect(x+w*.52f,y,w*.48f,42),"Share link",UiTheme.BtnBlue))ShareJoinLink();
-            if(!hosting&&network!=null&&!network.Connected&&TBtn(new Rect(x+w*.52f,y,w*.48f,42),"Reconnect",UiTheme.BtnBlue)){network.Dispose();network=NewSession();network.Join(online?joinCode:address);wasConnected=false;}
+            if(TBtn(new Rect(x,y,w*.30f,42),"Back",UiTheme.BtnGray)){network?.Dispose();network=null;screen=ScreenMode.Menu;}
+            if(TBtn(new Rect(x+w*.32f,y,w*.36f,42),"Collection",UiTheme.BtnGray))OpenCollection(true);
+            if(hosting&&!practice&&TBtn(new Rect(x+w*.70f,y,w*.30f,42),"Share",UiTheme.BtnBlue))ShareJoinLink();
+            if(!hosting&&network!=null&&!network.Connected&&TBtn(new Rect(x+w*.70f,y,w*.30f,42),partnerJoin?"Find":"Reconnect",UiTheme.BtnBlue))ReconnectSession();
         }
         void CollectionUI(float x,float w)
         {
@@ -593,7 +673,7 @@ namespace PaperTrails
             if(TBtn(narrow?new Rect(x+w*.47f,cy+10,w*.53f,60):new Rect(x,cy+20,Mathf.Min(w*.5f,380),55),narrow?$"Turn / {Cost} coins":$"Turn capsule  /  {Cost} coins",UiTheme.BtnRed))
             {
                 var locked=new List<int>();for(int i=0;i<SkinFactory.Names.Length;i++)if(!unlocked.Contains(i))locked.Add(i);
-                int choice=locked[UnityEngine.Random.Range(0,locked.Count)];wallet-=Cost;unlocked.Add(choice);skin=choice;reveal=SkinFactory.Names[choice]+" unlocked";unlockTime=Time.time;Save();sound.Play("unlock");
+                int choice=locked[UnityEngine.Random.Range(0,locked.Count)];wallet-=Cost;unlocked.Add(choice);skin=choice;reveal=SkinFactory.Names[choice]+" unlocked";unlockTime=Time.time;Save();if(collectionFromLobby)SendLobby();sound.Play("unlock");
             }
             GUI.enabled=true;
             GUI.Label(narrow?new Rect(x+w*.47f,cy+78,w*.53f,110):new Rect(x,cy+85,Mathf.Min(w*.5f,380),100),Time.time-unlockTime>=2?reveal:"Opening capsule...",new GUIStyle(label){fontSize=narrow?17:19,wordWrap=true});
@@ -604,7 +684,7 @@ namespace PaperTrails
             if(TBtn(new Rect(x+w*.70f,cy+16,w*.30f,36),"Copy",UiTheme.BtnBlue)){GUIUtility.systemCopyBuffer=recoveryCode;recoveryCopied=true;}
             GUI.Label(new Rect(x,cy+56,w*.68f,22),recoveryCopied?"Copied to clipboard":"Keep this code somewhere safe",small);
             restoreCode=GUI.TextField(new Rect(x,cy+80,w*.68f,38),restoreCode);
-            if(TBtn(new Rect(x+w*.70f,cy+80,w*.30f,38),"Restore",UiTheme.BtnGray))if(!RestoreRecoveryCode())reveal="Invalid recovery code";
+            if(TBtn(new Rect(x+w*.70f,cy+80,w*.30f,38),"Restore",UiTheme.BtnGray)){if(!RestoreRecoveryCode())reveal="Invalid recovery code";else if(collectionFromLobby)SendLobby();}
             cy+=narrow?160:160;
             Panel(new Rect(x-8,cy-6,w+16,76));
             GUI.DrawTexture(new Rect(x+2,cy-2,64,64),studio.BigIcon(skin),ScaleMode.ScaleToFit);
@@ -614,8 +694,8 @@ namespace PaperTrails
             Rect area=new Rect(x,cy,w,uiHeight-cy-70);int columns=narrow?2:3;float cellH=narrow?60:64;
             collectionScroll=GUI.BeginScrollView(area,collectionScroll,new Rect(0,0,w-25,Mathf.Ceil(SkinFactory.Names.Length/(float)columns)*cellH));
             for(int i=0;i<SkinFactory.Names.Length;i++)
-            {GUI.enabled=unlocked.Contains(i);float cx=i%columns*(w-25)/columns,cy2=i/columns*cellH,cellWidth=(w-25)/columns-8;var cell=new Rect(cx,cy2,cellWidth,cellH-8);Card(cell);if(i==skin)Fill(cell,new Color(.95f,.73f,.16f,.22f));if(GUI.Button(cell,GUIContent.none,GUIStyle.none)&&Time.unscaledTime>suppressClickUntil){skin=i;Save();}GUI.DrawTexture(new Rect(cx+4,cy2+4,48,48),studio.Icon(i),ScaleMode.ScaleToFit);GUI.Label(new Rect(cx+56,cy2+10,cellWidth-58,44),(skin==i?"✓ ":"")+SkinFactory.Names[i],new GUIStyle(small){fontSize=narrow?13:16,wordWrap=true,normal={textColor=unlocked.Contains(i)?UiTheme.Ink:new Color(.45f,.5f,.55f)}});}GUI.enabled=true;GUI.EndScrollView();
-            if(TBtn(new Rect(x,uiHeight-60,200,45),"Back",UiTheme.BtnGray))screen=ScreenMode.Menu;
+            {GUI.enabled=unlocked.Contains(i);float cx=i%columns*(w-25)/columns,cy2=i/columns*cellH,cellWidth=(w-25)/columns-8;var cell=new Rect(cx,cy2,cellWidth,cellH-8);Card(cell);if(i==skin)Fill(cell,new Color(.95f,.73f,.16f,.22f));if(GUI.Button(cell,GUIContent.none,GUIStyle.none)&&Time.unscaledTime>suppressClickUntil){skin=i;Save();if(collectionFromLobby)SendLobby();}GUI.DrawTexture(new Rect(cx+4,cy2+4,48,48),studio.Icon(i),ScaleMode.ScaleToFit);GUI.Label(new Rect(cx+56,cy2+10,cellWidth-58,44),(skin==i?"✓ ":"")+SkinFactory.Names[i],new GUIStyle(small){fontSize=narrow?13:16,wordWrap=true,normal={textColor=unlocked.Contains(i)?UiTheme.Ink:new Color(.45f,.5f,.55f)}});}GUI.enabled=true;GUI.EndScrollView();
+            if(TBtn(new Rect(x,uiHeight-60,collectionFromLobby?240:200,45),collectionFromLobby?"Back to lobby":"Back",UiTheme.BtnGray))CloseCollection();
         }
         void Hud()
         {
@@ -650,7 +730,7 @@ namespace PaperTrails
         static string ShortName(string s){s=(s??"").Trim();return s.Length>9?s.Substring(0,9)+"…":s;}
         bool Btn(Rect r,string text)=>GUI.Button(r,text,button)&&Time.unscaledTime>suppressClickUntil;
         IGameSession NewSession()=>online?(IGameSession)new RelaySession():new LanSession();
-        string SessionAddress()=>online?"Code "+network?.JoinCode:LocalAddress();
+        string SessionAddress()=>online?"Partner room":LocalAddress();
         static Texture2D Solid(Color color){var t=new Texture2D(1,1);t.SetPixel(0,0,color);t.Apply();return t;}
         static void Fill(Rect r,Color color){Color old=GUI.color;GUI.color=color;GUI.DrawTexture(r,Texture2D.whiteTexture);GUI.color=old;}
         static string LocalAddress(){try{foreach(var ip in Dns.GetHostEntry(Dns.GetHostName()).AddressList)if(ip.AddressFamily==AddressFamily.InterNetwork)return ip.ToString();}catch(Exception){}return "127.0.0.1";}

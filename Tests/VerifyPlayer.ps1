@@ -1,4 +1,4 @@
-param([ValidateSet('Visual','LAN','Relay')][string]$Mode = 'Visual')
+param([ValidateSet('Visual','LAN','Relay','Partner')][string]$Mode = 'Visual')
 $ErrorActionPreference = 'Stop'
 $paperRoot = Split-Path -Parent $PSScriptRoot
 $paperExe = Join-Path $paperRoot 'Builds\Windows\PaperTrails.exe'
@@ -33,8 +33,8 @@ if ($Mode -eq 'Visual') {
 } else {
     $hostLog = Join-Path $paperRoot "Builds\$Mode-host.log"
     $clientLog = Join-Path $paperRoot "Builds\$Mode-client.log"
-    $hostFlag = if ($Mode -eq 'Relay') { '-paperRelayHostSmoke' } else { '-paperHostSmoke' }
-    $clientFlag = if ($Mode -eq 'Relay') { '-paperRelayClientSmoke' } else { '-paperClientSmoke' }
+    $hostFlag = if ($Mode -eq 'Relay') { '-paperRelayHostSmoke' } elseif ($Mode -eq 'Partner') { '-paperPartnerHostSmoke' } else { '-paperHostSmoke' }
+    $clientFlag = if ($Mode -eq 'Relay') { '-paperRelayClientSmoke' } elseif ($Mode -eq 'Partner') { '-paperPartnerClientSmoke' } else { '-paperClientSmoke' }
     $codePath = Join-Path $paperRoot 'Builds\relay-join-code.txt'
     if ($Mode -eq 'Relay' -and (Test-Path -LiteralPath $codePath)) { Remove-Item -LiteralPath $codePath }
     $hostProcess = Start-Process -FilePath $paperExe -WorkingDirectory $paperRoot -ArgumentList $hostFlag,'-force-d3d11','-logFile',$hostLog -WindowStyle Hidden -PassThru
@@ -46,11 +46,13 @@ if ($Mode -eq 'Visual') {
             while (-not (Test-Path -LiteralPath $codePath) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 250 }
             if (-not (Test-Path -LiteralPath $codePath)) { throw 'Host did not generate a Relay join code; inspect Relay-host.log' }
             $clientArguments += (Get-Content -LiteralPath $codePath -Raw).Trim()
-        } else { Start-Sleep -Seconds 2 }
+        } elseif ($Mode -eq 'Partner') { Start-Sleep -Seconds 8 } else { Start-Sleep -Seconds 2 }
         $clientArguments += @('-force-d3d11','-logFile',$clientLog)
         $clientProcess = Start-Process -FilePath $paperExe -WorkingDirectory $paperRoot -ArgumentList $clientArguments -WindowStyle Hidden -PassThru
-        if (-not $clientProcess.WaitForExit(40000)) { throw 'Guest test timed out' }
-        if (-not $hostProcess.WaitForExit(30000)) { throw 'Host test timed out' }
+        $clientTimeout = if ($Mode -eq 'Partner') { 60000 } else { 40000 }
+        $hostTimeout = if ($Mode -eq 'Partner') { 30000 } else { 30000 }
+        if (-not $clientProcess.WaitForExit($clientTimeout)) { throw 'Guest test timed out' }
+        if (-not $hostProcess.WaitForExit($hostTimeout)) { throw 'Host test timed out' }
         Assert-Log $hostLog 'PAPERTRAILS_NETWORK_OK'
         Assert-Log $clientLog 'PAPERTRAILS_NETWORK_OK'
         Write-Output "PASS $Mode host / join / votes / authoritative match replication"

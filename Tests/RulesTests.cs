@@ -21,7 +21,7 @@ static class RulesTests
     {
         foreach(ArenaKind kind in Enum.GetValues(typeof(ArenaKind)))
         {
-            var a=new Arena(kind);Check(a.Claimable>300,kind+" claimable area");Check(a.Mask[a.Hubs[0]]&&a.Mask[a.Hubs[1]],kind+" hubs");Check(Arena.DistanceSquared(a.Hubs[0],a.Hubs[1])>100,kind+" distinct hubs");
+            var a=new Arena(kind);Check(a.Claimable>300,kind+" claimable area");Check(Math.Abs(a.Claimable*a.WorldScale*a.WorldScale-Arena.TargetCells)<1,kind+" medium normalized world area");Check(a.Mask[a.Hubs[0]]&&a.Mask[a.Hubs[1]],kind+" hubs");Check(Arena.DistanceSquared(a.Hubs[0],a.Hubs[1])>100,kind+" distinct hubs");
         }
         {
             var a=new Arena(ArenaKind.CrescentMoon);Check(a.Hubs[0]==5882&&a.Hubs[1]==854,"crescent uses measured hubs");
@@ -29,6 +29,7 @@ static class RulesTests
             for(int i=0;i<1500;i++)g.Step(GameSimulation.Tick);
             double red=100.0*g.RedCount/g.Arena.Claimable;Check(red>25&&red<75,"crescent hubs stay roughly fair");
         }
+        {var spiral=new Arena(ArenaKind.Spiral);Check(spiral.Claimable==1695,"spiral authored topology remains unchanged");var donut=new Arena(ArenaKind.Donut);Check(!donut.Mask[C(40,40)],"donut center hole remains open");}
         {
             foreach(ArenaKind kind in Enum.GetValues(typeof(ArenaKind)))
             {var a=new Arena(kind);Check(a.IsSpawnable(a.Hubs[0])&&a.IsSpawnable(a.Hubs[1]),kind+" spawns are playable");}
@@ -36,6 +37,34 @@ static class RulesTests
         foreach(Team a in new[]{Team.Red,Team.Blue})foreach(Team b in new[]{Team.Red,Team.Blue})
         {var g=new GameSimulation(ArenaKind.Cross,a,b);Check(g.Players.Count(p=>p.Team==Team.Red)==5&&g.Players.Count(p=>p.Team==Team.Blue)==5,"5v5 "+a+"/"+b);}
         {var g=new GameSimulation(ArenaKind.Cross,Team.Red,Team.Blue);Check(g.Players.Where(p=>p.Team==Team.Red).Select(p=>p.Cell).Distinct().Count()>1&&g.Players.Where(p=>p.Team==Team.Blue).Select(p=>p.Cell).Distinct().Count()>1,"spawn scatters teammates around hubs");}
+        {
+            var medium=new GameSimulation(ArenaKind.Cross,Team.Red,Team.Blue);
+            Check(medium.Difficulty==BotDifficulty.Medium&&medium.BotBrainFor(2).GetType().Name=="PheromoneV3","existing Pheromone V3 remains Medium default");
+            Check(ReferenceEquals(medium.BotBrainFor(2),medium.BotBrainFor(3)),"Medium CPUs share their team hivemind");
+            var easy=new GameSimulation(ArenaKind.Cross,Team.Red,Team.Blue,7,300,-1,-1,BotDifficulty.Easy);
+            Check(easy.Players.Where(p=>!p.Human).All(p=>p.BotDifficulty==BotDifficulty.Easy&&easy.BotBrainFor(p.Id).GetType().Name=="EasyBrain"),"Easy assigns independent basic brains");
+            Check(!ReferenceEquals(easy.BotBrainFor(2),easy.BotBrainFor(3)),"Easy CPUs do not share a hivemind");
+            var hardEnemy=new GameSimulation(ArenaKind.Cross,Team.Red,Team.Red,7,300,-1,-1,BotDifficulty.Hard);
+            Check(hardEnemy.Players.Where(p=>!p.Human&&p.Team==Team.Red).All(p=>p.BotDifficulty==BotDifficulty.Medium),"Hard keeps CPUs on the humans' team at Medium");
+            Check(hardEnemy.Players.Where(p=>!p.Human&&p.Team==Team.Blue).All(p=>p.BotDifficulty==BotDifficulty.Hard),"Hard upgrades every CPU on the enemy-only team");
+            var hardPractice=new GameSimulation(ArenaKind.Cross,Team.Red,Team.Blue,7,300,-1,-1,BotDifficulty.Hard,false);
+            Check(hardPractice.Players.Where(p=>!p.Human&&p.Team==Team.Red).All(p=>p.BotDifficulty==BotDifficulty.Medium)&&hardPractice.Players.Where(p=>p.Team==Team.Blue).All(p=>p.BotDifficulty==BotDifficulty.Hard),"Practice Hard treats the absent second slot as an enemy CPU");
+            var hardSplit=new GameSimulation(ArenaKind.Cross,Team.Red,Team.Blue,7,300,-1,-1,BotDifficulty.Hard);
+            Check(hardSplit.Players.Count(p=>!p.Human&&p.Team==Team.Red&&p.BotDifficulty==BotDifficulty.Hard)==2&&hardSplit.Players.Count(p=>!p.Human&&p.Team==Team.Blue&&p.BotDifficulty==BotDifficulty.Hard)==2,"split humans get two Hard CPUs per team");
+            Check(hardSplit.Players.Count(p=>!p.Human&&p.BotDifficulty==BotDifficulty.Medium)==4,"remaining split-team CPUs stay Medium");
+            Player hardCpu=hardSplit.Players.First(p=>p.BotDifficulty==BotDifficulty.Hard);
+            Check(Math.Abs(hardSplit.BotSpeedMultiplier(hardCpu)-1.5f)<.001f&&Math.Abs(hardSplit.BotSpeedMultiplier(hardSplit.Players[0])-1)<.001f,"Hard CPUs move 0.5x faster than humans only");
+            hardPractice.Players[0].Connected=false;for(int i=0;i<800;i++)hardPractice.Step(GameSimulation.Tick);
+            Check(hardPractice.RedCount+hardPractice.BlueCount>58&&hardPractice.Players.All(p=>hardPractice.Arena.Mask[p.Cell]),"Hard hivemind expands safely in a full simulation");
+            easy.Players[0].Connected=false;easy.Players[1].Connected=false;for(int i=0;i<800;i++)easy.Step(GameSimulation.Tick);
+            Check(easy.RedCount+easy.BlueCount>58&&easy.Players.All(p=>easy.Arena.Mask[p.Cell]),"independent Easy CPUs expand safely in a full simulation");
+        }
+        {
+            var g=Game(Team.Blue);g.Players[0].Connected=false;g.Players[1].Connected=false;
+            g.Step(.01f);Check(g.Coins[0].Count==GameSimulation.CoinSpawnBatch&&g.Coins[1].Count==GameSimulation.CoinSpawnBatch,"coin spawns arrive in larger batches");
+            for(int i=0;i<12;i++)g.Step(GameSimulation.CoinSpawnInterval);
+            Check(g.Coins[0].Count==GameSimulation.MaxCoinsPerPlayer&&g.Coins[1].Count==GameSimulation.MaxCoinsPerPlayer,"coin supply reaches increased cap");
+        }
         {
             var g=Game();var p=g.Players[0];var friend=g.Players[1];int c=C(40,40);CrossingTrail(friend);g.ResolveTrailContacts(p,40.5f,40,40.5f,41);g.EnterCell(p,c);
             Check(p.Alive&&friend.Alive&&friend.Trail.Count==1&&p.Trail.Count==1,"friendly trails independently overlap");
@@ -75,6 +104,16 @@ static class RulesTests
             Check(p.Alive&&Math.Abs(Math.Atan2(p.DZ,p.DX))<=GameSimulation.TurnRate*GameSimulation.Tick+.0001f&&p.DX<.7f&&p.DX>.4f,"human turn respects sharp configured rate without snapping");
             for(int i=0;i<2;i++)g.Step(GameSimulation.Tick);
             Check(p.Alive&&p.DX<-.9f,"opposite swipe reverses heading quickly");
+        }
+        {
+            float refX=0,refZ=0,refDX=0,refDZ=0;
+            for(int skin=0;skin<35;skin++)
+            {
+                var g=Game(Team.Blue);foreach(var q in g.Players)if(q.Id!=0){q.Alive=false;q.Respawn=999;}
+                Player p=g.Players[0];p.Skin=skin;g.SetDirection(0,0,1);for(int i=0;i<18;i++)g.Step(GameSimulation.Tick);
+                if(skin==0){refX=p.X;refZ=p.Z;refDX=p.DX;refDZ=p.DZ;}
+                else Check(Math.Abs(p.X-refX)<.000001f&&Math.Abs(p.Z-refZ)<.000001f&&Math.Abs(p.DX-refDX)<.000001f&&Math.Abs(p.DZ-refDZ)<.000001f,"skin "+skin+" has identical turn radius");
+            }
         }
         {
             var g=Game();var p=g.Players[0];
@@ -118,6 +157,11 @@ static class RulesTests
         {
             string json=JsonSerializer.Serialize(Packet.Snapshot(Game()),new JsonSerializerOptions{IncludeFields=true});
             string encoded=PacketCodec.Encode(json);Check(PacketCodec.Decode(encoded)==json,"compressed state round trip");Check(encoded.Length<json.Length/2,"territory snapshots compress");
+            string motion=PacketCodec.Encode(JsonSerializer.Serialize(Packet.Motion(Game()),new JsonSerializerOptions{IncludeFields=true}));
+            Check(motion.Length<SnapshotChunks.MaxDirect,$"20 Hz motion update fits one datagram ({motion.Length} chars)");
+            var g=Game();var original=g.Players[0];var stale=new WirePlayer(original){x=12,z=13,coins=9};float oldX=original.X,oldZ=original.Z;
+            stale.Apply(original,false);Check(original.X==oldX&&original.Z==oldZ&&original.Coins==9,"late world snapshot preserves newer motion");
+            var hard=new GameSimulation(ArenaKind.Cross,Team.Red,Team.Blue,7,300,-1,-1,BotDifficulty.Hard);Check(Packet.Snapshot(hard).difficulty==(int)BotDifficulty.Hard,"snapshot carries host CPU difficulty");
         }
         using(var host=new LanSession())
         {
@@ -140,7 +184,7 @@ static class RulesTests
         }
         {
             var asm=new SnapshotChunks.Assembler();
-            string big=new string('A',2000);
+            string big=new string('A',SnapshotChunks.MaxPiece*3+200);
             var parts=SnapshotChunks.Split(7,big);
             Check(parts.Length==4,"snapshot splits into bounded pieces");
             Check(Array.TrueForAll(parts,p=>p.Length<=SnapshotChunks.MaxPiece+32),"chunk pieces stay small");
@@ -148,9 +192,10 @@ static class RulesTests
             for(int i=parts.Length-1;i>=0;i--)ready=asm.Push(parts[i],out done);
             Check(ready&&done==big,"chunk reassembly restores payload out of order");
             var asm2=new SnapshotChunks.Assembler();string tmp=null;
-            var p1=SnapshotChunks.Split(1,new string('x',600));var p2=SnapshotChunks.Split(2,"yyyy");
+            var p1=SnapshotChunks.Split(1,new string('x',SnapshotChunks.MaxPiece+100));var p2=SnapshotChunks.Split(2,"yyyy");
             Check(p1.Length==2&&!asm2.Push(p1[0],out tmp)&&tmp==null,"partial snapshot is not emitted");
             Check(asm2.Push(p2[0],out tmp)&&tmp=="yyyy","newer snapshot replaces stale partial");
+            Check(!asm2.Push(p1[1],out tmp)&&tmp==null,"late old chunk cannot evict newer snapshot");
             Check(SnapshotChunks.Split(9,"hi").Length==1,"small payload stays whole");
             var g2=Game();for(int i=0;i<120;i++)g2.Step(GameSimulation.Tick);
             var snap=Packet.Snapshot(g2);
@@ -172,19 +217,30 @@ static class RulesTests
             Check(!JoinLink.TryParse(null,out _,out _),"null link rejected");
         }
         {
-            var g=Game();var p=g.Players[0];p.Human=true;p.Connected=true;
-            p.Alive=true;p.X=40.5f;p.Z=75.5f;p.Cell=C(40,75);p.DX=p.DesiredX=0;p.DZ=p.DesiredZ=1;
+            var g=Game();var p=g.Players[0];p.Human=true;p.Connected=true;int edge=-1;
+            for(int z=Arena.Size-2;z>0&&edge<0;z--)for(int x=1;x<Arena.Size-2;x++)
+            {
+                int c=C(x,z);float cx=x+.5f,cz=z+.5f;
+                if(g.Arena.WorldCell(cx,cz)>=0&&g.Arena.WorldCell(cx,cz+1)<0&&g.Arena.WorldCell(cx+.8f,cz)>=0&&g.Owners[c]!=Team.Red){edge=c;break;}
+            }
+            Check(edge>=0,"wall grind test finds a normalized-map edge");float startX=edge%Arena.Size+.5f;
+            p.Alive=true;p.X=startX;p.Z=edge/Arena.Size+.5f;p.Cell=edge;p.DX=p.DesiredX=0;p.DZ=p.DesiredZ=1;
             p.Trail.Clear();p.TrailSet.Clear();p.TrailPath.Clear();p.Route.Clear();p.Target=-1;
             foreach(var o in g.Players)if(o!=p){o.Alive=false;o.Respawn=999;}
-            for(int i=0;i<30;i++)g.Step(GameSimulation.Tick);
+            bool touchedWall=false;for(int i=0;i<30;i++){g.Step(GameSimulation.Tick);touchedWall|=p.WallRideGrace>0;}
+            Check(touchedWall,"wall contact enables short self-trail neck grace");
             Check(p.Alive,"wall grind preserves life");
-            Check(p.DX==1&&p.DZ==0,"wall grind snaps to the tangential axis");
-            Check(Math.Abs(p.X-40.5f)>1&&p.Z<78,"wall grind keeps sliding instead of bouncing");
+            Check(Math.Abs(p.X-startX)>.2f,"wall grind advances along the tangent");
+            Check(Math.Abs(p.X-startX)>1&&p.Z<Arena.Size,"wall grind keeps sliding instead of bouncing");
             Check(p.Trail.Count>0,"grinding outside turf extends the ribbon");
             var q=g.Players[5];q.Alive=true;q.Respawn=0;q.Trail.Clear();q.TrailSet.Clear();q.TrailPath.Clear();
             GridPoint mid=p.TrailPath[p.TrailPath.Count/2];
             g.ResolveTrailContacts(q,mid.X-1,mid.Z,mid.X+1,mid.Z);
             Check(!p.Alive&&p.Respawn==2&&q.Alive,"trail cut while wall riding still kills");
+            var grace=Game();var gp=grace.Players[0];gp.X=42.3f;gp.Z=40.5f;gp.TrailPath.Add(new GridPoint(39.5f,40.5f));gp.TrailPath.Add(new GridPoint(41.2f,40.5f));gp.WallRideGrace=.3f;
+            grace.ResolveTrailContacts(gp,40.5f,40,40.5f,41);Check(gp.Alive,"wall grace forgives only the freshly folded trail neck");
+            var old=Game();var op=old.Players[0];op.X=43;op.Z=40.5f;op.TrailPath.Add(new GridPoint(39,40.5f));op.TrailPath.Add(new GridPoint(41,40.5f));op.TrailPath.Add(new GridPoint(42,40.5f));op.WallRideGrace=.3f;
+            old.ResolveTrailContacts(op,40,40,40,41);Check(!op.Alive,"wall grace still kills crossings into older self trail");
             foreach(var other in g.Players){other.Alive=false;other.Respawn=999;}
             var g2=new GameSimulation(ArenaKind.Skull,Team.Red,Team.Blue,5,300);
             foreach(var bot in g2.Players)bot.Human=false;

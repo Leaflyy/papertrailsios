@@ -5,14 +5,16 @@ namespace PaperTrails.Core
 {
     public enum MatchPhase { Playing, Overtime, Finished }
     public enum Personality { Aggressor, Explorer, Balanced }
+    public enum BotDifficulty { Easy, Medium, Hard }
     [Serializable] public sealed class Player
     {
         public int Id, Skin, Cell, Captured, Cuts, Deaths, Largest, Coins, ExcursionLeg, Stuck, Objective = -1;
         public string Name;
         public Team Team;
         public bool Human, Connected, Alive = true, CanStartTrail = true;
-        public float X, Z, DX = 1, DZ, Respawn, DesiredX = 1, DesiredZ;
+        public float X, Z, DX = 1, DZ, Respawn, DesiredX = 1, DesiredZ, WallRideGrace;
         public Personality Personality;
+        public BotDifficulty BotDifficulty = BotDifficulty.Medium;
         public float BotThink;
         public readonly List<int> Trail = new List<int>();
         public readonly HashSet<int> TrailSet = new HashSet<int>();
@@ -25,10 +27,14 @@ namespace PaperTrails.Core
         public const float Tick = 1f / 25f;
         public const float Speed = 6f;
         public const float BotSpeed = Speed;
+        public const float CoinSpawnInterval = 1.5f;
+        public const int CoinSpawnBatch = 3;
+        public const int MaxCoinsPerPlayer = 24;
         // 1440 degrees/second: a sharp Paper.io-style reversal without teleporting the heading.
         public const float TurnRate = 8f*(float)Math.PI;
         public string MatchId = Guid.NewGuid().ToString("N");
         public readonly Arena Arena;
+        public readonly BotDifficulty Difficulty;
         public readonly Team[] Owners;
         public readonly Player[] Players = new Player[10];
         public readonly List<int>[] Coins = { new List<int>(), new List<int>() };
@@ -41,19 +47,19 @@ namespace PaperTrails.Core
         public IBotBrain BrainRed, BrainBlue;
         public long StepCount;
         readonly Random random;
+        readonly IBotBrain[] botBrains = new IBotBrain[10];
         readonly bool[] visited;
         readonly int[] queue, parent;
         float coinTimer;
-        public GameSimulation(ArenaKind arena, Team first, Team second, int seed = 12345, float duration = 300, int hub0 = -1, int hub1 = -1)
+        public GameSimulation(ArenaKind arena, Team first, Team second, int seed = 12345, float duration = 300, int hub0 = -1, int hub1 = -1, BotDifficulty difficulty = BotDifficulty.Medium, bool secondHuman = true)
         {
+            Difficulty = difficulty;
             Arena = new Arena(arena);
             if(hub0>=0)Arena.Hubs[0]=hub0;
             if(hub1>=0)Arena.Hubs[1]=hub1;
             Owners = new Team[Arena.Mask.Length];
             visited = new bool[Owners.Length]; queue = new int[Owners.Length]; parent = new int[Owners.Length];
             Remaining = duration; random = new Random(seed);
-            BrainRed = new PheromoneV3(seed + 101);
-            BrainBlue = new PheromoneV3(seed + 202);
             for (int i = 0; i < Owners.Length; i++)
             {
                 Owners[i] = !Arena.Mask[i] ? Team.Blocked : Arena.Protected(i,Team.Red) ? Team.Red : Arena.Protected(i,Team.Blue) ? Team.Blue : Team.Neutral;
@@ -64,11 +70,54 @@ namespace PaperTrails.Core
             {
                 Team team = i==0 ? first : i==1 ? second : red<5 ? Team.Red : Team.Blue;
                 if (team == Team.Red) red++; else blue++;
-                Players[i] = new Player { Id=i, Name=i<2?"Player "+(i+1):"CPU "+(i-1), Team=team, Human=i<2, Connected=i==0, Personality=(Personality)(i%3) };
+                Players[i] = new Player { Id=i, Name=i<2?"Player "+(i+1):"CPU "+(i-1), Team=team, Human=i==0||i==1&&secondHuman, Connected=i==0, Personality=(Personality)(i%3) };
                 Spawn(Players[i]);
             }
+            ConfigureBots(seed);
             Count();
         }
+        void ConfigureBots(int seed)
+        {
+            var mediumRed = new PheromoneV3(seed + 101);
+            var mediumBlue = new PheromoneV3(seed + 202);
+            BrainRed = mediumRed; BrainBlue = mediumBlue;
+            if (Difficulty == BotDifficulty.Easy)
+            {
+                for (int i = 0; i < Players.Length; i++)
+                {
+                    Players[i].BotDifficulty = BotDifficulty.Easy;
+                    botBrains[i] = new EasyBrain(seed + 1000 + i * 37);
+                }
+                return;
+            }
+            for (int i = 0; i < Players.Length; i++)
+            {
+                Players[i].BotDifficulty = BotDifficulty.Medium;
+                botBrains[i] = Players[i].Team == Team.Red ? mediumRed : mediumBlue;
+            }
+            if (Difficulty != BotDifficulty.Hard) return;
+
+            var hardRed = new HardHiveBrain(seed + 303, Team.Red);
+            var hardBlue = new HardHiveBrain(seed + 404, Team.Blue);
+            int humanRed = 0, humanBlue = 0;
+            foreach (Player p in Players) if (p.Human) { if (p.Team == Team.Red) humanRed++; else humanBlue++; }
+            bool splitHumans = humanRed > 0 && humanBlue > 0;
+            foreach (Team t in new[] { Team.Red, Team.Blue })
+            {
+                bool humanTeam = t == Team.Red ? humanRed > 0 : humanBlue > 0;
+                int hardSlots = splitHumans ? 2 : humanTeam ? 0 : 5;
+                int assigned = 0;
+                foreach (Player p in Players)
+                {
+                    if (p.Team != t || p.Human || assigned >= hardSlots) continue;
+                    p.BotDifficulty = BotDifficulty.Hard;
+                    botBrains[p.Id] = t == Team.Red ? hardRed : hardBlue;
+                    assigned++;
+                }
+            }
+        }
+        public IBotBrain BotBrainFor(int id) => id >= 0 && id < botBrains.Length ? botBrains[id] : null;
+        public float BotSpeedMultiplier(Player p) => p != null && !p.Human && p.BotDifficulty == BotDifficulty.Hard ? 1.5f : 1f;
         public void SetDirection(int id, float dx, float dz)
         {
             if (id < 0 || id > 1 || float.IsNaN(dx) || float.IsNaN(dz) || float.IsInfinity(dx) || float.IsInfinity(dz)) return;
@@ -86,15 +135,17 @@ namespace PaperTrails.Core
             foreach (Player p in Players)
             {
                 if (!p.Alive) { p.Respawn-=dt; if(p.Respawn<=0) Spawn(p); continue; }
-                if(!p.Human || !p.Connected){IBotBrain brain=p.Team==Team.Red?BrainRed:BrainBlue;if(brain!=null)brain.Think(p,this,dt);else Bot(p,dt);}
-                float distance=(p.Human&&p.Connected?Speed:BotSpeed)*dt;
+                if(p.WallRideGrace>0)p.WallRideGrace=Math.Max(0,p.WallRideGrace-dt);
+                if(!p.Human || !p.Connected){IBotBrain brain=botBrains[p.Id];if(brain!=null)brain.Think(p,this,dt);else Bot(p,dt);}
+                float cellSpeed=(p.Human&&p.Connected?Speed:BotSpeed*BotSpeedMultiplier(p))/Arena.WorldScale;
+                float distance=cellSpeed*dt;
                 while(distance>0 && p.Alive && Phase!=MatchPhase.Finished)
                 {
                     float step=Math.Min(distance,.2f); distance-=step;
                     if(p.Human && p.Connected)
                     {
                         double angle=Math.Atan2(p.DX*p.DesiredZ-p.DZ*p.DesiredX,p.DX*p.DesiredX+p.DZ*p.DesiredZ);
-                        angle=Math.Max(-TurnRate*step/Speed,Math.Min(TurnRate*step/Speed,angle));
+                        angle=Math.Max(-TurnRate*step/cellSpeed,Math.Min(TurnRate*step/cellSpeed,angle));
                         float dx=p.DX;
                         p.DX=dx*(float)Math.Cos(angle)-p.DZ*(float)Math.Sin(angle);
                         p.DZ=dx*(float)Math.Sin(angle)+p.DZ*(float)Math.Cos(angle);
@@ -104,7 +155,7 @@ namespace PaperTrails.Core
                 if(p.Human && p.Connected && p.Alive && Coins[p.Id].Remove(p.Cell)) { p.Coins++; Event?.Invoke("coin",p.Id,1); }
             }
             coinTimer-=dt;
-            if(coinTimer<=0) { coinTimer=3; SpawnCoins(); }
+            if(coinTimer<=0) { coinTimer=CoinSpawnInterval; SpawnCoins(); }
             if(ending && Phase==MatchPhase.Playing){Remaining=0;EndRegulation();}
         }
         void Move(Player p,float distance)
@@ -114,15 +165,7 @@ namespace PaperTrails.Core
             Team enemy=p.Team==Team.Red?Team.Blue:Team.Red;
             if(cell<0 || Arena.Protected(cell,enemy))
             {
-                bool slide=false;
-                for(int axis=0;axis<2&&!slide;axis++)
-                {
-                    bool xAxis=(Math.Abs(p.DX)>=Math.Abs(p.DZ))==(axis==0);
-                    float dx=xAxis?(p.DX>=0?1:-1):0,dz=xAxis?0:(p.DZ>=0?1:-1);
-                    float nx=p.X+dx*distance,nz=p.Z+dz*distance;int nc=Arena.WorldCell(nx,nz);
-                    if(nc<0||Arena.Protected(nc,enemy)||nc!=p.Cell&&p.TrailSet.Contains(nc))continue;
-                    p.DX=dx;p.DZ=dz;x=nx;z=nz;cell=nc;slide=true;
-                }
+                bool slide=TryWallSlide(p,distance,enemy,cell<0,out x,out z,out cell);
                 if(!slide)
                 {
                     float rx=p.X+p.DX*distance,rz=p.Z+p.DZ*distance;
@@ -175,6 +218,36 @@ namespace PaperTrails.Core
                 }
             }
         }
+        bool TryWallSlide(Player p,float distance,Team enemy,bool arenaWall,out float x,out float z,out int cell)
+        {
+            x=p.X;z=p.Z;cell=p.Cell;
+            float best=float.NegativeInfinity,bestDx=0,bestDz=0,bestX=0,bestZ=0;int bestCell=-1;
+            double heading=Math.Atan2(p.DZ,p.DX);
+            // Sample the full circle so curves and diagonal authored edges stay
+            // smooth. Alignment heavily favors the smallest possible deflection;
+            // two look-ahead probes keep the chosen tangent from immediately
+            // pointing back through the same wall at the next substep.
+            for(int i=0;i<32;i++)
+            {
+                double angle=heading+i*Math.PI*2/32;
+                float dx=(float)Math.Cos(angle),dz=(float)Math.Sin(angle);
+                float nx=p.X+dx*distance,nz=p.Z+dz*distance;int nc=Arena.WorldCell(nx,nz);
+                if(nc<0||Arena.Protected(nc,enemy)||nc!=p.Cell&&p.TrailSet.Contains(nc))continue;
+                float alignment=p.DX*dx+p.DZ*dz;
+                float score=alignment*8+(p.DesiredX*dx+p.DesiredZ*dz)*.35f;
+                for(int look=1;look<=2;look++)
+                {
+                    float probe=look*.35f;
+                    int ahead=Arena.WorldCell(p.X+dx*probe,p.Z+dz*probe);
+                    if(ahead>=0&&!Arena.Protected(ahead,enemy))score+=2;
+                }
+                if(score>best){best=score;bestDx=dx;bestDz=dz;bestX=nx;bestZ=nz;bestCell=nc;}
+            }
+            if(bestCell<0)return false;
+            p.DX=bestDx;p.DZ=bestDz;
+            if(p.Human&&p.Connected){p.DesiredX=bestDx;p.DesiredZ=bestDz;}
+            if(arenaWall)p.WallRideGrace=.35f;x=bestX;z=bestZ;cell=bestCell;return true;
+        }
         public void EnterCell(Player p,int cell)
         {
             if(!p.Alive || Phase==MatchPhase.Finished) return;
@@ -197,12 +270,13 @@ namespace PaperTrails.Core
         static bool HitsTrail(Player owner,float ax,float az,float bx,float bz,bool self)
         {
             float cx=owner.X,cz=owner.Z,recent=0;
+            float neck=self&&owner.WallRideGrace>0?1.8f:.9f;
             for(int i=owner.TrailPath.Count-1;i>=0;i--)
             {
                 GridPoint d=owner.TrailPath[i];float dx=cx-d.X,dz=cz-d.Z;
                 float length=(float)Math.Sqrt(dx*dx+dz*dz);
                 // The head always touches its newest ribbon; exclude only that short neck.
-                if(!self || recent>=.9f)
+                if(!self || recent>=neck)
                 {
                     float ux=bx-ax,uz=bz-az,vx=d.X-cx,vz=d.Z-cz;
                     float cross=ux*vz-uz*vx;
@@ -259,7 +333,7 @@ namespace PaperTrails.Core
             }
             p.Cell=cell;p.X=cell%Arena.Size+.5f;p.Z=cell/Arena.Size+.5f;
             double angle=(p.Id*.618+random.NextDouble()*.1)*Math.PI*2;
-            p.DX=p.DesiredX=(float)Math.Cos(angle);p.DZ=p.DesiredZ=(float)Math.Sin(angle);p.Alive=true;p.CanStartTrail=true;p.Respawn=0;p.Target=-1;p.Objective=-1;p.Stuck=0;p.Route.Clear();
+            p.DX=p.DesiredX=(float)Math.Cos(angle);p.DZ=p.DesiredZ=(float)Math.Sin(angle);p.Alive=true;p.CanStartTrail=true;p.Respawn=0;p.WallRideGrace=0;p.Target=-1;p.Objective=-1;p.Stuck=0;p.Route.Clear();
             Event?.Invoke("respawn",p.Id,0);
         }
         static void ClearTrail(Player p) { p.Trail.Clear();p.TrailSet.Clear();p.TrailPath.Clear(); }
@@ -303,9 +377,15 @@ namespace PaperTrails.Core
         {
             for(int id=0;id<2;id++)
             {
-                if(Coins[id].Count>=12)continue;
-                for(int attempt=0;attempt<120;attempt++)
-                { int c=random.Next(Owners.Length);if(Owners[c]==Players[id].Team&&!Coins[id].Contains(c)) {Coins[id].Add(c);break;} }
+                for(int spawned=0;spawned<CoinSpawnBatch&&Coins[id].Count<MaxCoinsPerPlayer;spawned++)
+                {
+                    int start=random.Next(Owners.Length);
+                    for(int attempt=0;attempt<Owners.Length;attempt++)
+                    {
+                        int c=(start+attempt)%Owners.Length;
+                        if(Owners[c]==Players[id].Team&&!Coins[id].Contains(c)){Coins[id].Add(c);break;}
+                    }
+                }
             }
         }
         void Bot(Player p,float dt)

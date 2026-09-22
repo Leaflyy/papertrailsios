@@ -11,7 +11,10 @@ namespace PaperTrails
     // as the payload, so framing can never split or confuse a chunk).
     public static class SnapshotChunks
     {
+        // FastBufferWriter reserves up to two bytes per string character, so
+        // 500 leaves room beneath Relay/UTP's 1280-byte message capacity.
         public const int MaxPiece = 500;
+        public const int MaxDirect = 600;
         public static string[] Split(int seq,string payload)
         {
             if(payload==null)payload="";
@@ -22,7 +25,7 @@ namespace PaperTrails
         }
         public sealed class Assembler
         {
-            int current=-1,count;string[] parts;int got;
+            int current=-1,latest=-1,count;string[] parts;int got;
             public bool Push(string chunk,out string payload)
             {
                 payload=null;
@@ -31,7 +34,10 @@ namespace PaperTrails
                 if(head.Length!=5||head[0]!="CH")return false;
                 if(!int.TryParse(head[1],out int seq)||!int.TryParse(head[2],out int idx)||!int.TryParse(head[3],out int total))return false;
                 if(total<1||total>4096||idx<0||idx>=total)return false;
-                if(seq!=current){current=seq;count=total;parts=new string[total];got=0;}
+                // Unreliable chunks can arrive out of order. Once a newer
+                // snapshot starts, a late chunk must not evict it.
+                if(seq!=current&&seq<=latest)return false;
+                if(seq!=current){current=seq;latest=seq;count=total;parts=new string[total];got=0;}
                 if(total!=count)return false;
                 if(parts[idx]==null){parts[idx]=head[4];got++;}
                 if(got==count){payload=string.Concat(parts);current=-1;parts=null;return true;}

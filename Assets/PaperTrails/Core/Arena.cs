@@ -9,11 +9,13 @@ namespace PaperTrails.Core
     public sealed class Arena
     {
         public const int Size = 80;
+        public const int TargetCells = 2600;
         public readonly bool[] Mask = new bool[Size * Size];
         public readonly int[] Hubs = new int[2];
         public readonly ArenaKind Kind;
         public readonly GridPoint[] Boundary;
         public int Claimable { get; private set; }
+        public float WorldScale { get; private set; } = 1;
 
         public Arena(ArenaKind kind)
         {
@@ -37,6 +39,10 @@ namespace PaperTrails.Core
                 if (clear) candidates.Add(i);
             }
             if (candidates.Count < 2) throw new InvalidOperationException("Arena has no valid spawn hubs");
+            // Preserve the authored mask exactly. WorldScale normalizes its
+            // physical surface area without thickening paths, closing holes,
+            // or allowing separate arms (such as the spiral) to intersect.
+            WorldScale=(float)Math.Sqrt(TargetCells/(double)Claimable);
             Hubs[0] = candidates[0]; Hubs[1] = candidates[candidates.Count - 1];
             // Separate hubs by corridor (BFS) distance, not Euclidean: on winding
             // maps like Spiral the Euclidean-diameter pair can sit on adjacent

@@ -45,6 +45,7 @@ namespace PaperTrails
                 catch(Exception){Status="Could not connect. Check address and Wi-Fi.";}
             }){IsBackground=true}.Start();
         }
+        public void JoinPartner(){Status="Partner discovery is only available online.";}
         void Attach(TcpClient client)
         {
             if(disposed){client.Close();return;}
